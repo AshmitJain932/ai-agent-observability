@@ -10,8 +10,12 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from importlib.metadata import version
 from typing import Any
+from uuid import UUID
+
+from sqlalchemy import Connection
 
 from .config import ConfigError, Settings
 
@@ -55,6 +59,119 @@ def _db_current(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+@contextmanager
+def _transaction(settings: Settings) -> Any:
+    from .storage.db import make_engine
+
+    engine = make_engine(settings.require_database_url(), pool_size=1)
+    try:
+        with engine.begin() as conn:
+            yield conn
+    finally:
+        engine.dispose()
+
+
+def _uuid(value: str, what: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError:
+        raise CommandError(f"{what} {value!r} is not a valid id") from None
+
+
+def _org_create(args: argparse.Namespace, settings: Settings) -> int:
+    from .storage import tenancy
+
+    with _transaction(settings) as conn:
+        org_id = tenancy.create_organization(conn, args.name)
+    _print({"organization_id": org_id, "name": args.name})
+    return 0
+
+
+def _project_create(args: argparse.Namespace, settings: Settings) -> int:
+    from pydantic import ValidationError
+
+    from .project_settings import ProjectSettings
+    from .storage import tenancy
+
+    org_id = _uuid(args.org, "organization")
+    try:
+        project_settings = ProjectSettings(
+            capture_ceiling=args.capture_ceiling,
+            error_messages=args.error_messages,
+            stack_traces=args.stack_traces,
+            retention_days=args.retention_days,
+            max_spans_per_trace=args.max_spans_per_trace,
+        )
+    except ValidationError as exc:
+        raise ConfigError(f"invalid project settings: {exc.errors(include_url=False)[0]['msg']}") from None
+    with _transaction(settings) as conn:
+        if not tenancy.organization_exists(conn, org_id):
+            raise CommandError(f"organization {org_id} does not exist")
+        project_id = tenancy.create_project(conn, org_id, args.name, project_settings)
+    _print({"project_id": project_id, "name": args.name, "settings": project_settings.to_db()})
+    return 0
+
+
+def _project_or_fail(conn: Connection, project_id: UUID) -> None:
+    from .storage import tenancy
+
+    if tenancy.project_settings(conn, project_id) is None:
+        raise CommandError(f"project {project_id} does not exist")
+
+
+def _key_create(args: argparse.Namespace, settings: Settings) -> int:
+    from .auth.service import create_key
+    from .model.wire import ENVIRONMENT_PATTERN, ecma_to_python
+
+    project_id = _uuid(args.project, "project")
+    scopes = tuple(s.strip() for s in args.scopes.split(",") if s.strip())
+    if not scopes or set(scopes) - {"ingest", "read", "admin"}:
+        raise ConfigError("--scopes must be a comma-separated subset of ingest,read,admin")
+    if args.environment is not None and not ecma_to_python(ENVIRONMENT_PATTERN).match(args.environment):
+        raise ConfigError("--environment must match the wire schema's environment pattern ([a-z0-9][a-z0-9_.-]*)")
+    with _transaction(settings) as conn:
+        _project_or_fail(conn, project_id)
+        key_id, key = create_key(conn, project_id, args.name, scopes, args.environment)
+    _print(
+        {
+            "key_id": key_id,
+            "api_key": key.secret,
+            "prefix": key.prefix,
+            "project_id": project_id,
+            "scopes": sorted(set(scopes)),
+            "environment": args.environment,
+            "note": "Store this key now. Only its hash is kept; it cannot be shown again.",
+        }
+    )
+    return 0
+
+
+def _key_list(args: argparse.Namespace, settings: Settings) -> int:
+    from dataclasses import asdict
+
+    from .storage import tenancy
+
+    project_id = _uuid(args.project, "project")
+    with _transaction(settings) as conn:
+        _project_or_fail(conn, project_id)
+        keys = tenancy.list_api_keys(conn, project_id)
+    _print([asdict(k) for k in keys])
+    return 0
+
+
+def _key_revoke(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import UTC, datetime
+
+    from .storage import tenancy
+
+    key_id = _uuid(args.key_id, "key")
+    with _transaction(settings) as conn:
+        if not tenancy.revoke_api_key(conn, key_id, datetime.now(UTC)):
+            raise CommandError(f"no active key {key_id}")
+    _print({"revoked": key_id})
+    return 0
+
+
 # --------------------------------------------------------------------------- parser
 
 
@@ -73,6 +190,44 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.add_argument("--revision", default="head")
     upgrade.set_defaults(handler=_db_upgrade)
     db.add_parser("current", help="print the current schema revision").set_defaults(handler=_db_current)
+
+    org = commands.add_parser("org", help="organizations").add_subparsers(dest="org_command", metavar="ACTION")
+    org.required = True
+    org_create = org.add_parser("create", help="create an organization")
+    org_create.add_argument("--name", required=True)
+    org_create.set_defaults(handler=_org_create)
+
+    project = commands.add_parser("project", help="projects").add_subparsers(dest="project_command", metavar="ACTION")
+    project.required = True
+    project_create = project.add_parser("create", help="create a project")
+    project_create.add_argument("--org", required=True, help="organization id")
+    project_create.add_argument("--name", required=True)
+    project_create.add_argument(
+        "--capture-ceiling",
+        choices=["metadata_only", "redacted", "full"],
+        default="metadata_only",
+        help="most content this project stores, whatever SDKs send (default: metadata_only)",
+    )
+    project_create.add_argument("--error-messages", action=argparse.BooleanOptionalAction, default=True)
+    project_create.add_argument("--stack-traces", action=argparse.BooleanOptionalAction, default=False)
+    project_create.add_argument("--retention-days", type=int, default=30)
+    project_create.add_argument("--max-spans-per-trace", type=int, default=10_000)
+    project_create.set_defaults(handler=_project_create)
+
+    key = commands.add_parser("key", help="API keys").add_subparsers(dest="key_command", metavar="ACTION")
+    key.required = True
+    key_create = key.add_parser("create", help="create an API key (printed once)")
+    key_create.add_argument("--project", required=True, help="project id")
+    key_create.add_argument("--name", required=True, help="label, e.g. the service using the key")
+    key_create.add_argument("--scopes", default="ingest", help="comma-separated: ingest,read,admin (default ingest)")
+    key_create.add_argument("--environment", help="only allow writing this environment")
+    key_create.set_defaults(handler=_key_create)
+    key_list = key.add_parser("list", help="list a project's keys (never shows secrets)")
+    key_list.add_argument("--project", required=True)
+    key_list.set_defaults(handler=_key_list)
+    key_revoke = key.add_parser("revoke", help="revoke a key immediately")
+    key_revoke.add_argument("--key-id", required=True)
+    key_revoke.set_defaults(handler=_key_revoke)
     return parser
 
 
