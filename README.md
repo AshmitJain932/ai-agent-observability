@@ -1,7 +1,7 @@
 # aobs — vendor-neutral observability for AI agents
 
-> Working name. Status: **Phase 1 complete** — canonical event model, validation and trace
-> assembly. No SDK, server API, storage or UI yet.
+> Working name. Status: **Phase 2 complete** — canonical event model and a working Python SDK
+> with an example agent. No collector server, storage or UI yet (Phases 3–4).
 
 Records what an AI agent did — model calls, tool calls, sub-agents, errors, latency, tokens and
 cost — as nested traces, regardless of framework or model provider.
@@ -10,46 +10,50 @@ cost — as nested traces, regardless of framework or model provider.
 
 | Component | Location | Status |
 |---|---|---|
-| Wire schema v1.0 (normative JSON Schema) | `schema/v1/ingest.schema.json` | Done |
-| Conformance fixtures (10 valid, 43 invalid, 4 versioning) | `schema/fixtures/` | Done |
-| Strict parsing, validation, version policy | `server/src/aobs_server/model/` | Done (library only) |
-| Deterministic merge + trace assembly | `server/src/aobs_server/model/` | Done (library only) |
-| Python SDK | — | Phase 2 |
+| Wire schema v1.0 (normative JSON Schema) + 57 conformance fixtures | `schema/` | Done |
+| Strict parsing, validation, version policy, merge, trace assembly | `server/src/aobs_server/model/` | Done (library only) |
+| Python SDK `aobs` (stdlib only) | `sdk/python/` | Done — see [docs/sdk.md](docs/sdk.md) |
+| OpenAI-compatible integration (sync/async/streaming) | `aobs.integrations.openai_compat` | Done — tested with `openai` 3.29.0 |
+| Example tool-calling agent, mock and live modes | `examples/support_agent/` | Done |
+| Overhead benchmark + recorded baseline | `sdk/python/benchmarks/`, [docs/benchmarks.md](docs/benchmarks.md) | Done |
 | Ingestion API, storage, auth | — | Phase 3 |
 | Query API, dashboard | — | Phase 4 |
 
-## Development
+## Try it
 
 Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11.
 
 ```bash
-uv sync                                    # create .venv with server + dev dependencies
-uv run pytest                              # full suite (~70 s; the differential sweep dominates)
-uv run pytest --deselect server/tests/test_differential.py   # fast loop (~5 s)
-uv run ruff check server && uv run ruff format --check server
-uv run mypy server/src                     # strict
-uv run python -m aobs_server.model.schema_lock   # schema file matches its lock
+uv sync
+uv run python examples/support_agent/run.py --scenario refund-outage    # no API key needed
 ```
 
-Using the model library:
+Prints the agent's answer, then the trace the collector will reconstruct (validated with the
+Phase 1 model library). See [examples/support_agent/README.md](examples/support_agent/README.md).
 
-```python
-from datetime import UTC, datetime
-from aobs_server.model import validate_batch, assemble_events
+## Development
 
-result = validate_batch(raw_request_body)        # bytes; strict JSON + schema + version policy
-traces = assemble_events(result.accepted, datetime.now(UTC))
-for trace_id, view in traces.items():
-    print(trace_id, view.status, view.tokens["input_tokens"].to_dict())
+```bash
+uv run pytest                                   # everything: server + SDK (~95 s)
+uv run pytest sdk/python/tests                  # SDK only (~25 s)
+uv run pytest --deselect server/tests/test_differential.py   # fast loop
+uv run ruff check server sdk examples && uv run ruff format --check server sdk examples
+uv run mypy server/src sdk/python/src           # strict
+uv run python -m aobs_server.model.schema_lock  # schema file matches its lock
+uv run python sdk/python/benchmarks/overhead.py # overhead benchmark (~1 min)
 ```
+
+Python 3.11 run: `UV_PROJECT_ENVIRONMENT=.venv-311 uv run --python 3.11 pytest`.
 
 ## Documentation
 
 | Doc | Contents |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | System shape, stack, ingestion pipeline, storage, SDK, privacy, risks, differentiator readiness |
+| [docs/sdk.md](docs/sdk.md) | SDK usage, configuration, privacy, delivery guarantees, integrations, limitations |
+| [docs/benchmarks.md](docs/benchmarks.md) | Overhead method and recorded baseline |
+| [docs/architecture.md](docs/architecture.md) | System shape, stack, ingestion pipeline, storage, privacy, risks, differentiator readiness |
 | [docs/event-model.md](docs/event-model.md) | Normative event semantics: fields, unknown-value rules, merge, derived state, versioning |
-| [docs/roadmap.md](docs/roadmap.md) | Phases 1–11 with acceptance criteria; test strategy |
+| [docs/roadmap.md](docs/roadmap.md) | Phases 1–11 with acceptance criteria and status |
 | [docs/decisions.md](docs/decisions.md) | Architecture decision records and pending decisions |
 | [docs/reviews/](docs/reviews/) | Design reviews and what they changed |
 | [schema/CHANGELOG.md](schema/CHANGELOG.md) | Wire schema versions |
@@ -58,8 +62,8 @@ for trace_id, view in traces.items():
 
 | Integration | Status |
 |---|---|
-| Manual instrumentation (Python) | Planned — Phase 2 |
-| OpenAI-compatible Chat Completions (Python) | Planned — Phase 2 |
+| Manual instrumentation (Python ≥ 3.11) | Supported (Phase 2) |
+| OpenAI-compatible Chat Completions client (Python) | Supported; tested with `openai` 3.29.0 |
 | HTTP ingestion API (any language) | Planned — Phase 3 (the wire schema already exists) |
 | OpenTelemetry GenAI (OTLP) ingestion | Planned — Phase 7 |
 | Everything else | Not supported |

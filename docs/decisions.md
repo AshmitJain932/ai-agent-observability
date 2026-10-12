@@ -82,12 +82,36 @@ cross-process/cross-run comparison. Never sent to the server.
 **Consequence.** Default fingerprints only compare within one process (enough for in-run repeats).
 Cross-run waste analysis requires users to configure a stable key — documented in Phase 10.
 
+## ADR-012 — SDK requires Python ≥ 3.11 · Accepted (2026-10-12)
+**Context.** Phase 0 planned 3.10. Python 3.10 reaches end of life in October 2026 (PEP 619), and the
+uv workspace resolves one `requires-python` for all members (the server needs 3.11).
+**Decision.** `aobs` requires Python ≥ 3.11; CI tests 3.11 and 3.13.
+**Consequence.** Users on 3.10 cannot install the SDK; they are on an unsupported Python anyway.
+
+## ADR-013 — Exporters receive the encoded wire batch · Accepted (2026-10-12)
+**Context.** The SDK must not be tied to one transport, and tests must see exactly what a collector
+would receive.
+**Decision.** `Exporter.export(EncodedBatch, timeout_s) -> ExportResult` where `EncodedBatch.body`
+is the complete schema-v1.0 envelope bytes, rebuilt per attempt (fresh `sent_at`, same
+`batch_id`). Outcomes: `success`, `retry` (with optional `retry_after_s`), `failure`. Exceptions
+count as `retry`.
+**Consequence.** Every transport (HTTP, file, in-memory, future ones) is conformance-testable by
+validating `body`; encoding happens once, on the worker thread.
+
+## ADR-014 — Ingest response contract the SDK relies on · Accepted (2026-10-12)
+**Context.** The SDK's retry behaviour depends on how the collector answers; Phase 3 must honour it.
+**Decision.** 2xx = batch processed; the body may be a JSON object whose `rejected` array lists
+events rejected individually (counted by the SDK, never retried). 408/429/5xx = retry
+(`Retry-After` in seconds honoured). Other 4xx = permanent failure. 3xx is never followed.
+**Consequence.** Phase 3 adds a contract test running the SDK's `HttpExporter` against the real API.
+
 ---
 
 ## Pending decisions
 
-Not yet answered; the defaults are in use as of Phase 1 (2026-10-12). None of them affects Phase 1
-code. P1 and P4 should be settled before Phase 2 publishes a package; P2 before Phase 4.
+Not yet answered; the defaults are in use as of Phase 2 (2026-10-12). None of them affected Phase 1 or 2
+code. P1 and P4 should be settled before the SDK is published to a package index (not done
+in Phase 2); P2 before Phase 4.
 
 | # | Question | Default if unanswered | Why it matters |
 |---|---|---|---|

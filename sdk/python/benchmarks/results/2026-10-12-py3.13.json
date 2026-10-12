@@ -1,0 +1,87 @@
+{
+  "environment": {
+    "date": "2026-10-12T13:32:41Z",
+    "python": "3.13.16",
+    "implementation": "CPython",
+    "platform": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cpu_count": 2,
+    "aobs": "0.1.0.dev0"
+  },
+  "method": {
+    "ops": 20000,
+    "repeats": 15,
+    "warmup": 5000
+  },
+  "results": {
+    "empty_span": {
+      "capture": "metadata_only",
+      "baseline_ns_median": 327,
+      "instrumented_ns_median": 26638,
+      "instrumented_ns_p90": 28611,
+      "overhead_us_median": 26.31,
+      "cpu_per_op_us_total": 25.82,
+      "bytes_per_event": 265,
+      "events_exported": 325000,
+      "events_dropped": 0,
+      "internal_errors": 0
+    },
+    "tool_call_metadata_only": {
+      "capture": "metadata_only",
+      "baseline_ns_median": 111,
+      "instrumented_ns_median": 57040,
+      "instrumented_ns_p90": 64954,
+      "overhead_us_median": 56.93,
+      "cpu_per_op_us_total": 57.95,
+      "bytes_per_event": 504,
+      "events_exported": 325000,
+      "events_dropped": 0,
+      "internal_errors": 0
+    },
+    "tool_call_full_capture": {
+      "capture": "full",
+      "baseline_ns_median": 112,
+      "instrumented_ns_median": 73319,
+      "instrumented_ns_p90": 80417,
+      "overhead_us_median": 73.21,
+      "cpu_per_op_us_total": 67.73,
+      "bytes_per_event": 619,
+      "events_exported": 325000,
+      "events_dropped": 0,
+      "internal_errors": 0
+    },
+    "llm_call_metadata_only": {
+      "capture": "metadata_only",
+      "baseline_ns_median": 163,
+      "instrumented_ns_median": 98306,
+      "instrumented_ns_p90": 105729,
+      "overhead_us_median": 98.14,
+      "cpu_per_op_us_total": 87.1,
+      "bytes_per_event": 735,
+      "events_exported": 325000,
+      "events_dropped": 0,
+      "internal_errors": 0
+    },
+    "llm_call_full_capture": {
+      "capture": "full",
+      "baseline_ns_median": 171,
+      "instrumented_ns_median": 153186,
+      "instrumented_ns_p90": 160828,
+      "overhead_us_median": 153.02,
+      "cpu_per_op_us_total": 146.25,
+      "bytes_per_event": 1923,
+      "events_exported": 325000,
+      "events_dropped": 0,
+      "internal_errors": 0
+    },
+    "tool_call_sdk_not_initialized": {
+      "baseline_ns_median": 112,
+      "instrumented_ns_median": 794,
+      "overhead_us_median": 0.68
+    },
+    "memory": {
+      "queued_events": 900,
+      "queued_bytes_per_event": 1737
+    }
+  }
+}

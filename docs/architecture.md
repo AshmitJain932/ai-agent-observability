@@ -64,11 +64,13 @@ aobs/
 │  ├─ v1/ingest.schema.json
 │  ├─ fixtures/valid/*.json, fixtures/invalid/*.json   # shared conformance fixtures
 │  └─ CHANGELOG.md
-├─ sdk/python/             # package `aobs` — stdlib-only core, optional extras per integration
-│  ├─ src/aobs/core/       # tracer, span, context, ids, clock
-│  ├─ src/aobs/privacy/    # capture modes, redactors
-│  ├─ src/aobs/export/     # queue, batcher, http transport, diagnostics
-│  ├─ src/aobs/integrations/openai_compat/   # first provider adapter
+├─ sdk/python/             # package `aobs` — stdlib only (built in Phase 2; see docs/sdk.md)
+│  ├─ src/aobs/_api.py, _tracer.py      # public API, spans, contextvars propagation
+│  ├─ src/aobs/_sanitize.py             # schema-conformant values at the API boundary, secret scrubbing
+│  ├─ src/aobs/privacy.py, fingerprint.py, config.py, _diagnostics.py
+│  ├─ src/aobs/export/                  # Exporter protocol; processor (queue, batching, retries); http, file, memory
+│  ├─ src/aobs/integrations/openai_compat.py   # first provider integration
+│  ├─ benchmarks/                       # overhead harness + recorded baselines
 │  └─ tests/
 ├─ server/                 # package `aobs_server`
 │  ├─ src/aobs_server/model/      # PURE (no I/O): wire models, version policy, merge, trace assembly
@@ -98,7 +100,7 @@ The Python packages form a `uv` workspace rooted at the repository root.
 | Concern | Choice | Why | Trade-off accepted |
 |---|---|---|---|
 | Wire contract | JSON Schema (draft 2020-12) in `schema/` | Language-neutral; future SDKs (TS, Go) and third-party clients validate against the same file. | Must keep server Pydantic models in sync — enforced by a test that validates every fixture with both. |
-| First SDK | Python ≥ 3.10, **stdlib-only core** | Most agent code is Python. `contextvars` gives correct parent tracking across `asyncio`. No dependencies = no version conflicts inside customer apps (Pydantic v1/v2 and httpx pins are a real source of breakage). | We hand-write small pieces (UUIDv7, HTTP via `urllib`/`http.client`) instead of importing them. |
+| First SDK | Python ≥ 3.11 (changed from 3.10 in Phase 2: 3.10 reaches end of life in October 2026 per PEP 619, and the uv workspace needs one floor), **stdlib-only core** | Most agent code is Python. `contextvars` gives correct parent tracking across `asyncio`. No dependencies = no version conflicts inside customer apps (Pydantic v1/v2 and httpx pins are a real source of breakage). | We hand-write small pieces (UUIDv7, HTTP via `urllib`/`http.client`) instead of importing them. |
 | Backend | FastAPI + Pydantic v2 | Typed validation at the edge, OpenAPI generated for free (drives the TS client), async-capable. | Pydantic validation cost per event; acceptable at pilot scale, measured in Phase 8. |
 | DB access | SQLAlchemy 2 Core + Alembic + psycopg 3 | Explicit SQL for bulk upserts (`INSERT … ON CONFLICT`) and keyset pagination; migrations from day one. | More SQL written by hand than with an ORM-heavy approach. |
 | Storage | PostgreSQL 16 | See §6. Relational integrity for tenants/keys, JSONB for open-ended attributes, transactions for idempotent merge, one system to operate. | Not a columnar store; large-scale analytics will eventually want ClickHouse or similar. Storage sits behind repositories so the span store can move without touching ingest/query contracts. |
@@ -185,29 +187,40 @@ trace is a first-class API from Phase 3 and writes a tombstone.
 
 ## 8. SDK design
 
+Implemented in Phase 2; the user-facing reference is [sdk.md](sdk.md), measured overhead is in
+[benchmarks.md](benchmarks.md).
+
 ```python
 import aobs
+from aobs.integrations import openai_compat
 from openai import OpenAI
 
-aobs.init(api_key=os.environ["AOBS_API_KEY"], endpoint="http://localhost:8000",
-          environment="dev", capture="metadata_only")       # default capture
-client = aobs.integrations.openai_compat.wrap(OpenAI())    # explicit wrap, no global patching
+aobs.init(service_name="support-agent", endpoint="http://localhost:8000",
+          environment="dev", capture="metadata_only")       # default capture; AOBS_* env vars work too
+client = openai_compat.wrap(OpenAI(), provider="openai")   # explicit wrap, no global patching
 
-@aobs.tool()
+@aobs.tool
 def get_order_status(order_id: str) -> dict: ...
 
 with aobs.run("answer_ticket", session_id=ticket_id, agent="triage"):
     reply = client.chat.completions.create(model=..., messages=...)
 ```
 
-Guarantees:
+Guarantees (each covered by tests in `sdk/python/tests/`):
 
 - **Never breaks the host app.** All exporter and serialization errors are caught; the application's
-  own exceptions are recorded and then re-raised unchanged. Misconfiguration raises only at
-  `init()` and only with `strict=True`.
+  own exceptions are recorded and then re-raised unchanged (same object). Misconfiguration raises
+  only at `init()` and only with `strict=True`; otherwise the SDK warns and uses a safe default.
+- **Schema-conformant by construction.** Every user-supplied value passes `_sanitize` at the API
+  boundary (truncated, normalized or dropped and counted); property tests feed arbitrary input and
+  validate every emitted batch against the JSON Schema and the collector model.
 - **Correct nesting** via `contextvars` (works across `await`, `asyncio.gather`, task groups).
-  Threads and executors need `aobs.context.attach()`/`copy_context()`; documented, and tested.
-- **Durations from a monotonic clock** (`perf_counter_ns`); wall-clock timestamps are for placement.
+  Threads and executors need `aobs.with_current_context(fn)`; documented and tested.
+- **Durations from a monotonic clock** (`perf_counter_ns`); `end_time = start_time + duration`.
+- **Finalizer safety:** an abandoned LLM stream is recorded as `cancelled` from `__del__` without
+  taking any lock there (work is queued on a reentrant-safe `SimpleQueue` and done by the worker),
+  so cyclic garbage collection can never deadlock the SDK.
+- **No redirects** in the HTTP exporter (a redirect could forward the `Authorization` header).
 - **Bounded memory:** queue of N events (default 10,000); when full, new events are dropped and
   counted, never blocking the app.
 - **Delivery:** background thread batches every 1 s or 500 events; retries with jittered backoff on
@@ -218,9 +231,10 @@ Guarantees:
   retries, last error) and the `aobs` logger emits rate-limited warnings.
 - **Partial runs survive:** spans emit `span_start` so a crash or kill still leaves an
   in-progress/incomplete record on the server instead of nothing.
-- **Start coalescing:** if a span finishes before its `span_start` has left the queue, the start is
-  discarded and only the self-contained `span_end` is sent. Short spans cost one event; long spans
-  still announce themselves within one flush interval.
+- **Start coalescing:** a `span_start` becomes eligible for export only after `start_delay_s`
+  (default 1 s) or at a flush. If the span ends first, the start is discarded and only the
+  self-contained `span_end` is sent. Short spans cost one event; long or hung spans still announce
+  themselves about a second after they begin.
 - **Batches fit the server limit:** the exporter splits batches so each request stays under the
   body and event-count limits, including captured content.
 

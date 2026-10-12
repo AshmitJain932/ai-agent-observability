@@ -1,6 +1,6 @@
 # Virtual uv workspace root. Packages live in server/ (and sdk/python/ from Phase 2).
 [tool.uv.workspace]
-members = ["server"]
+members = ["server", "sdk/python"]
 
 [dependency-groups]
 dev = [
@@ -10,10 +10,11 @@ dev = [
   "rfc3339-validator>=0.1.4",
   "ruff>=0.6",
   "mypy>=1.11",
+  "openai>=3.29,<4",  # tests of the openai_compat integration (SDK itself does not depend on it)
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["server/tests"]
+testpaths = ["server/tests", "sdk/python/tests"]
 addopts = "-ra --strict-markers"
 
 [tool.ruff]
@@ -27,7 +28,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 strict = true
 python_version = "3.11"
 plugins = ["pydantic.mypy"]
-mypy_path = "server/src"
+mypy_path = ["server/src", "sdk/python/src"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["aobs_server", "support"]
+known-first-party = ["aobs", "aobs_server", "support", "sdk_support"]

@@ -128,6 +128,13 @@ Fields: `input_tokens`, `output_tokens`, `total_tokens`, `cache_read_input_token
 `sdk_estimated`. At least one count is required. **Unknown counts are omitted — `null` is
 rejected.** `total_tokens` is only what the provider reported; the platform never derives it.
 
+Canonical meaning (clarified in Phase 2; no wire change): `input_tokens` is **all** input tokens
+the model processed, including tokens read from or written to a prompt cache;
+`cache_read_input_tokens` and `cache_write_input_tokens` are subsets of it. Likewise
+`reasoning_tokens` is a subset of `output_tokens`. Integrations must convert providers that report
+cached tokens separately (adding them in), so totals and Phase 6 cost estimates mean the same
+thing for every provider. OpenAI Chat Completions already reports `prompt_tokens` inclusively.
+
 **`cost`** (`span_end` only; only when the provider itself reports cost)
 
 ```json
