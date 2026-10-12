@@ -1,0 +1,226 @@
+{
+  "description": "Triage agent hands off to a refund sub-agent; a tool fails once and the retry succeeds -> ok_with_errors.",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "metadata_only",
+        "error_messages": true,
+        "stack_traces": false
+      }
+    },
+    "events": [
+      {
+        "type": "span_start",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "answer_ticket",
+        "start_time": "2026-10-12T12:15:00.000000Z",
+        "agent": {
+          "name": "triage"
+        }
+      },
+      {
+        "type": "span_start",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "c100000000000000",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "agent",
+        "name": "refund_specialist",
+        "start_time": "2026-10-12T12:15:01.000000Z",
+        "agent": {
+          "name": "refund_specialist"
+        },
+        "links": [
+          {
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+            "span_id": "00f067aa0ba902b7",
+            "relation": "handoff_from"
+          }
+        ]
+      },
+      {
+        "type": "span_event",
+        "event_id": "0192f4a1-7c3e-7b10-9a2d-5f6e1c0b8d42",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "name": "handoff",
+        "time": "2026-10-12T12:15:00.990000Z",
+        "attributes": {
+          "aobs.handoff.from_agent": "triage",
+          "aobs.handoff.to_agent": "refund_specialist"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "c100000000000001",
+        "parent_span_id": "c100000000000000",
+        "kind": "tool",
+        "name": "issue_refund",
+        "start_time": "2026-10-12T12:15:01.010000Z",
+        "end_time": "2026-10-12T12:15:01.510000Z",
+        "duration_ms": 500.0,
+        "status": "error",
+        "tool": {
+          "name": "issue_refund"
+        },
+        "retry": {
+          "attempt": 1,
+          "max_attempts": 3
+        },
+        "error": {
+          "type": "TimeoutError",
+          "origin": "timeout",
+          "retryable": true
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "c100000000000002",
+        "parent_span_id": "c100000000000000",
+        "kind": "tool",
+        "name": "issue_refund",
+        "start_time": "2026-10-12T12:15:01.600000Z",
+        "end_time": "2026-10-12T12:15:01.700000Z",
+        "duration_ms": 100.0,
+        "status": "ok",
+        "tool": {
+          "name": "issue_refund"
+        },
+        "retry": {
+          "attempt": 2,
+          "max_attempts": 3
+        },
+        "links": [
+          {
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+            "span_id": "c100000000000001",
+            "relation": "retry_of"
+          }
+        ]
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "c100000000000003",
+        "parent_span_id": "c100000000000002",
+        "kind": "step",
+        "name": "validate_refund",
+        "start_time": "2026-10-12T12:15:01.610000Z",
+        "end_time": "2026-10-12T12:15:01.650000Z",
+        "duration_ms": 40.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "c100000000000000",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "agent",
+        "name": "refund_specialist",
+        "start_time": "2026-10-12T12:15:01.000000Z",
+        "end_time": "2026-10-12T12:15:01.800000Z",
+        "duration_ms": 800.0,
+        "status": "ok",
+        "agent": {
+          "name": "refund_specialist"
+        },
+        "links": [
+          {
+            "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+            "span_id": "00f067aa0ba902b7",
+            "relation": "handoff_from"
+          }
+        ]
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "c100000000000004",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "llm",
+        "name": "chat",
+        "start_time": "2026-10-12T12:15:00.100000Z",
+        "end_time": "2026-10-12T12:15:00.900000Z",
+        "duration_ms": 800.0,
+        "status": "ok",
+        "llm": {
+          "provider": "openai",
+          "operation": "chat",
+          "request_model": "model-x"
+        },
+        "usage": {
+          "input_tokens": 400,
+          "output_tokens": 20,
+          "source": "sdk_estimated"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "answer_ticket",
+        "start_time": "2026-10-12T12:15:00.000000Z",
+        "end_time": "2026-10-12T12:15:02.000000Z",
+        "duration_ms": 2000.0,
+        "status": "ok",
+        "agent": {
+          "name": "triage"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "assemble_at": "2026-10-12T12:20:00Z",
+    "traces": {
+      "4bf92f3577b34da6a3ce929d0e0e4736": {
+        "status": "ok_with_errors",
+        "roots": [
+          "00f067aa0ba902b7"
+        ],
+        "orphans": [],
+        "span_count": 6,
+        "error_count": 1,
+        "children": {
+          "00f067aa0ba902b7": [
+            "c100000000000004",
+            "c100000000000000"
+          ],
+          "c100000000000000": [
+            "c100000000000001",
+            "c100000000000002"
+          ],
+          "c100000000000002": [
+            "c100000000000003"
+          ]
+        },
+        "tokens": {
+          "input_tokens": {
+            "value": 400,
+            "reported_spans": 1,
+            "expected_spans": 1,
+            "complete": true,
+            "estimated": true
+          }
+        }
+      }
+    }
+  }
+}

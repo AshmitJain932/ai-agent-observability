@@ -1,0 +1,88 @@
+{
+  "description": "Two roots (fan-out); one root fails -> error. A child starts 2 s before its parent (clock skew flag).",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "metadata_only",
+        "error_messages": true,
+        "stack_traces": false
+      }
+    },
+    "events": [
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "worker_a",
+        "start_time": "2026-10-12T12:15:00.000000Z",
+        "end_time": "2026-10-12T12:15:03.000000Z",
+        "duration_ms": 3000.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "0a00000000000002",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "worker_b",
+        "start_time": "2026-10-12T12:15:01.000000Z",
+        "end_time": "2026-10-12T12:15:04.000000Z",
+        "duration_ms": 3000.0,
+        "status": "error",
+        "error": {
+          "type": "RuntimeError"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "0a00000000000003",
+        "parent_span_id": "0a00000000000002",
+        "kind": "llm",
+        "name": "chat",
+        "start_time": "2026-10-12T12:14:59.000000Z",
+        "end_time": "2026-10-12T12:15:02.000000Z",
+        "duration_ms": 3000.0,
+        "status": "ok",
+        "llm": {
+          "provider": "openai",
+          "operation": "chat",
+          "request_model": "model-x"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "assemble_at": "2026-10-12T12:20:00Z",
+    "traces": {
+      "4bf92f3577b34da6a3ce929d0e0e4736": {
+        "status": "error",
+        "roots": [
+          "00f067aa0ba902b7",
+          "0a00000000000002"
+        ],
+        "span_count": 3,
+        "flags": {
+          "0a00000000000003": [
+            "clock_skew_suspected"
+          ]
+        }
+      }
+    }
+  }
+}

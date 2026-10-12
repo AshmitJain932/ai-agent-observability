@@ -1,0 +1,160 @@
+{
+  "description": "Full-capture resource with integrations; every content state; attributes of each type; provider-reported cost; unknown span kind; 9-digit fractional seconds.",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "full",
+        "error_messages": true,
+        "stack_traces": true
+      },
+      "integrations": [
+        {
+          "name": "openai_compat",
+          "version": "0.1.0",
+          "capabilities": [
+            "llm.usage",
+            "llm.streaming"
+          ]
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "planner.step",
+        "name": "plan",
+        "start_time": "2026-10-12T12:15:00.123456789Z",
+        "end_time": "2026-10-12T12:15:01.000000Z",
+        "duration_ms": 877.0,
+        "status": "ok",
+        "attributes": {
+          "app.customer_tier": "gold",
+          "app.retries": 2,
+          "app.ratio": 0.25,
+          "app.flag": true,
+          "app.tags": [
+            "a",
+            "b"
+          ],
+          "aobs.prompt.name": "triage",
+          "aobs.prompt.version": "7",
+          "mcp.server": "orders"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "aa00000000000001",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "llm",
+        "name": "chat",
+        "start_time": "2026-10-12T12:15:00.200000Z",
+        "end_time": "2026-10-12T12:15:00.800000Z",
+        "duration_ms": 600.0,
+        "status": "ok",
+        "llm": {
+          "provider": "openai",
+          "operation": "chat",
+          "request_model": "model-x",
+          "provider_request_id": "req_42"
+        },
+        "usage": {
+          "input_tokens": 10,
+          "cache_read_input_tokens": 4,
+          "reasoning_tokens": 3,
+          "source": "provider_reported"
+        },
+        "cost": {
+          "amount": "0.000731",
+          "currency": "USD",
+          "source": "provider_reported"
+        },
+        "content": {
+          "input": {
+            "status": "captured",
+            "format": "messages",
+            "value": [
+              {
+                "role": "user",
+                "parts": [
+                  {
+                    "type": "text",
+                    "content": "Where is order 1042?"
+                  }
+                ]
+              }
+            ],
+            "truncated": false
+          },
+          "output": {
+            "status": "redacted",
+            "format": "text",
+            "value": "Mail [REDACTED:email]",
+            "redaction_count": 1,
+            "truncated": true
+          }
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "aa00000000000002",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "retrieval",
+        "name": "search_kb",
+        "start_time": "2026-10-12T12:15:00.100000Z",
+        "end_time": "2026-10-12T12:15:00.150000Z",
+        "duration_ms": 50.0,
+        "status": "ok",
+        "content": {
+          "input": {
+            "status": "captured",
+            "format": "json",
+            "value": null
+          },
+          "output": {
+            "status": "unavailable"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "assemble_at": "2026-10-12T12:20:00Z",
+    "traces": {
+      "4bf92f3577b34da6a3ce929d0e0e4736": {
+        "status": "ok",
+        "span_count": 3,
+        "tokens": {
+          "input_tokens": {
+            "value": 10,
+            "reported_spans": 1,
+            "expected_spans": 1,
+            "complete": true
+          },
+          "output_tokens": {
+            "value": null,
+            "reported_spans": 0,
+            "expected_spans": 1,
+            "complete": false
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "description": "span_event fields are closed",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "metadata_only",
+        "error_messages": true,
+        "stack_traces": false
+      }
+    },
+    "events": [
+      {
+        "type": "span_event",
+        "event_id": "0192f4a1-7c3e-7b10-9a2d-5f6e1c0b8d45",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "name": "log",
+        "time": "2026-10-12T12:15:00.000000Z",
+        "status": "ok"
+      }
+    ]
+  },
+  "expect": {
+    "valid": false,
+    "path": "events/0"
+  }
+}

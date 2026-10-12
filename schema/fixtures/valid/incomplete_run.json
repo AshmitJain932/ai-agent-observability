@@ -1,0 +1,109 @@
+{
+  "description": "Two traces: T1's root started 5 min before 'now' and never ended (stale -> incomplete); T2's root started 2 s ago (in_progress).",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "metadata_only",
+        "error_messages": true,
+        "stack_traces": false
+      }
+    },
+    "events": [
+      {
+        "type": "span_start",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "answer_ticket",
+        "start_time": "2026-10-12T12:00:00Z"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "d100000000000001",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "llm",
+        "name": "chat",
+        "start_time": "2026-10-12T12:00:01Z",
+        "end_time": "2026-10-12T12:00:02Z",
+        "duration_ms": 1000.0,
+        "status": "ok",
+        "llm": {
+          "provider": "openai",
+          "operation": "chat",
+          "request_model": "model-x"
+        }
+      },
+      {
+        "type": "span_start",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "d100000000000002",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "tool",
+        "name": "slow_tool",
+        "start_time": "2026-10-12T12:00:03Z",
+        "tool": {
+          "name": "slow_tool"
+        }
+      },
+      {
+        "type": "span_start",
+        "trace_id": "5c0a3e2b9d8f47e1a6b2c3d4e5f60718",
+        "span_id": "e100000000000001",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "nightly_job",
+        "start_time": "2026-10-12T12:19:58Z"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "assemble_at": "2026-10-12T12:20:00Z",
+    "stale_after_seconds": 60,
+    "traces": {
+      "4bf92f3577b34da6a3ce929d0e0e4736": {
+        "status": "incomplete",
+        "roots": [
+          "00f067aa0ba902b7"
+        ],
+        "span_count": 3,
+        "lifecycles": {
+          "00f067aa0ba902b7": "incomplete",
+          "d100000000000001": "complete",
+          "d100000000000002": "incomplete"
+        },
+        "tokens": {
+          "input_tokens": {
+            "value": null,
+            "reported_spans": 0,
+            "expected_spans": 1,
+            "complete": false
+          }
+        }
+      },
+      "5c0a3e2b9d8f47e1a6b2c3d4e5f60718": {
+        "status": "in_progress",
+        "roots": [
+          "e100000000000001"
+        ],
+        "span_count": 1,
+        "lifecycles": {
+          "e100000000000001": "in_progress"
+        }
+      }
+    }
+  }
+}

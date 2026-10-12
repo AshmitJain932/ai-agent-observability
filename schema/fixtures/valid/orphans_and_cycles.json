@@ -1,0 +1,162 @@
+{
+  "description": "Missing parent, a 2-span cycle (with a healthy child), and a self-parented span. Wire-valid; the assembler must terminate and report them.",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "metadata_only",
+        "error_messages": true,
+        "stack_traces": false
+      }
+    },
+    "events": [
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "answer_ticket",
+        "start_time": "2026-10-12T12:15:00.000000Z",
+        "end_time": "2026-10-12T12:15:05.000000Z",
+        "duration_ms": 5000.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "f100000000000001",
+        "parent_span_id": "deadbeefdeadbeef",
+        "kind": "tool",
+        "name": "lost_parent_tool",
+        "start_time": "2026-10-12T12:15:01.000000Z",
+        "end_time": "2026-10-12T12:15:01.100000Z",
+        "duration_ms": 100.0,
+        "status": "ok",
+        "tool": {
+          "name": "lost_parent_tool"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "f100000000000002",
+        "parent_span_id": "f100000000000001",
+        "kind": "step",
+        "name": "under_orphan",
+        "start_time": "2026-10-12T12:15:01.010000Z",
+        "end_time": "2026-10-12T12:15:01.050000Z",
+        "duration_ms": 40.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "f200000000000001",
+        "parent_span_id": "f200000000000002",
+        "kind": "step",
+        "name": "cycle_a",
+        "start_time": "2026-10-12T12:15:02.000000Z",
+        "end_time": "2026-10-12T12:15:02.100000Z",
+        "duration_ms": 100.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "f200000000000002",
+        "parent_span_id": "f200000000000001",
+        "kind": "step",
+        "name": "cycle_b",
+        "start_time": "2026-10-12T12:15:02.010000Z",
+        "end_time": "2026-10-12T12:15:02.090000Z",
+        "duration_ms": 80.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "f200000000000003",
+        "parent_span_id": "f200000000000001",
+        "kind": "step",
+        "name": "child_of_cycle",
+        "start_time": "2026-10-12T12:15:02.020000Z",
+        "end_time": "2026-10-12T12:15:02.030000Z",
+        "duration_ms": 10.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "f300000000000001",
+        "parent_span_id": "f300000000000001",
+        "kind": "step",
+        "name": "self_parent",
+        "start_time": "2026-10-12T12:15:03.000000Z",
+        "end_time": "2026-10-12T12:15:03.010000Z",
+        "duration_ms": 10.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_event",
+        "event_id": "0192f4a1-7c3e-7b10-9a2d-5f6e1c0b8d44",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "abababababababab",
+        "name": "log",
+        "time": "2026-10-12T12:15:04.000000Z"
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "assemble_at": "2026-10-12T12:20:00Z",
+    "traces": {
+      "4bf92f3577b34da6a3ce929d0e0e4736": {
+        "status": "ok",
+        "roots": [
+          "00f067aa0ba902b7"
+        ],
+        "span_count": 7,
+        "orphans": [
+          {
+            "span_id": "f100000000000001",
+            "reason": "missing_parent"
+          },
+          {
+            "span_id": "f200000000000001",
+            "reason": "cycle"
+          },
+          {
+            "span_id": "f200000000000002",
+            "reason": "cycle"
+          },
+          {
+            "span_id": "f300000000000001",
+            "reason": "cycle"
+          }
+        ],
+        "children": {
+          "f100000000000001": [
+            "f100000000000002"
+          ],
+          "f200000000000001": [
+            "f200000000000003"
+          ]
+        },
+        "orphan_events": [
+          "0192f4a1-7c3e-7b10-9a2d-5f6e1c0b8d44"
+        ]
+      }
+    }
+  }
+}

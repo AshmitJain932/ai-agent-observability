@@ -1,0 +1,33 @@
+# Virtual uv workspace root. Packages live in server/ (and sdk/python/ from Phase 2).
+[tool.uv.workspace]
+members = ["server"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "hypothesis>=6",
+  "jsonschema>=4.23",
+  "rfc3339-validator>=0.1.4",
+  "ruff>=0.6",
+  "mypy>=1.11",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["server/tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+mypy_path = "server/src"
+
+[tool.ruff.lint.isort]
+known-first-party = ["aobs_server", "support"]

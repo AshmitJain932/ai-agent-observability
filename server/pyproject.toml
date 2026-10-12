@@ -1,0 +1,13 @@
+[project]
+name = "aobs-server"
+version = "0.1.0.dev0"
+description = "aobs server: canonical event model, ingestion and query (Phase 1: pure model only)"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.11,<3"]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aobs_server"]

@@ -52,9 +52,42 @@ adapter (Phase 7) is deliberately a *different* shape to prove neutrality.
 **Decision.** Validate-merge-store inside the request. Introduce a Postgres-backed work queue only
 when ingest latency measurements require it.
 
+## ADR-009 — Order-independent conflict resolution · Accepted (2026-10-12)
+**Context.** Retries, parallel exporters and out-of-order delivery mean "the first event received"
+is not a meaningful notion, yet the stored trace must not depend on arrival order.
+**Decision.** Identical duplicates are no-ops. When two events of the same type for the same span
+(or the same `event_id`) differ, the one whose canonical JSON (sorted keys, no whitespace) has the
+lowest SHA-256 wins, and the conflict is counted. Between a span's start and end, end wins field by
+field (deep merge of objects; arrays replaced).
+**Consequence.** Fully deterministic and testable by permutation. The winner of a genuine conflict
+is arbitrary-but-stable — acceptable because conflicts indicate a bug upstream and are surfaced.
+
+## ADR-010 — Strict validation for known versions, lenient only for newer minors · Accepted (2026-10-12)
+**Context.** Rejecting all unknown fields breaks older servers when SDKs upgrade; accepting all of
+them hides typos.
+**Decision.** The server knows a maximum minor per major. Payload minor ≤ known: unknown fields are
+errors. Payload minor > known: unknown fields are moved into `extra` (with their paths) and
+counted. Unknown major: batch rejected. Fields that future minors may extend (`kind`,
+`llm.operation`, `tool.type`, `error.origin`, link `relation`, capability names) are open,
+pattern-checked vocabularies; closed enums (`status`, content `status`, usage `source`, capture
+`mode`) change only in a major version.
+**Consequence.** Typos fail fast in tests; an old server keeps accepting a new SDK.
+
+## ADR-011 — Keyed (HMAC) input fingerprints · Accepted (2026-10-12)
+**Context.** Waste and loop detection need to know that two calls had identical inputs without
+storing the inputs. Unkeyed hashes of low-entropy inputs are reversible by enumeration.
+**Decision.** `input_fingerprint = "hmac-sha256:<key_id>:<hex>"` over a canonical JSON encoding of
+the input. Key held by the SDK: random per process by default, or a configured stable key for
+cross-process/cross-run comparison. Never sent to the server.
+**Consequence.** Default fingerprints only compare within one process (enough for in-run repeats).
+Cross-run waste analysis requires users to configure a stable key — documented in Phase 10.
+
 ---
 
 ## Pending decisions
+
+Not yet answered; the defaults are in use as of Phase 1 (2026-10-12). None of them affects Phase 1
+code. P1 and P4 should be settled before Phase 2 publishes a package; P2 before Phase 4.
 
 | # | Question | Default if unanswered | Why it matters |
 |---|---|---|---|

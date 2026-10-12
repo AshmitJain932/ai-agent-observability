@@ -1,0 +1,124 @@
+{
+  "description": "Retried batch: identical duplicate span_end and span_event (no-ops), plus one conflicting span_end (deterministic winner, counted).",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "metadata_only",
+        "error_messages": true,
+        "stack_traces": false
+      }
+    },
+    "events": [
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "answer_ticket",
+        "start_time": "2026-10-12T12:15:00.000000Z",
+        "end_time": "2026-10-12T12:15:02.000000Z",
+        "duration_ms": 2000.0,
+        "status": "ok"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000002",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "tool",
+        "name": "get_order_status",
+        "start_time": "2026-10-12T12:15:00.930000Z",
+        "end_time": "2026-10-12T12:15:01.050000Z",
+        "duration_ms": 120.4,
+        "status": "ok",
+        "tool": {
+          "name": "get_order_status"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000002",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "tool",
+        "name": "get_order_status",
+        "start_time": "2026-10-12T12:15:00.930000Z",
+        "end_time": "2026-10-12T12:15:01.050000Z",
+        "duration_ms": 120.4,
+        "status": "ok",
+        "tool": {
+          "name": "get_order_status"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000002",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "tool",
+        "name": "get_order_status",
+        "start_time": "2026-10-12T12:15:00.930000Z",
+        "end_time": "2026-10-12T12:15:01.050000Z",
+        "duration_ms": 999.9,
+        "status": "ok",
+        "tool": {
+          "name": "get_order_status"
+        }
+      },
+      {
+        "type": "span_event",
+        "event_id": "0192f4a1-7c3e-7b10-9a2d-5f6e1c0b8d43",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000002",
+        "name": "log",
+        "time": "2026-10-12T12:15:01.000000Z",
+        "attributes": {
+          "level": "info"
+        }
+      },
+      {
+        "type": "span_event",
+        "event_id": "0192f4a1-7c3e-7b10-9a2d-5f6e1c0b8d43",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000002",
+        "name": "log",
+        "time": "2026-10-12T12:15:01.000000Z",
+        "attributes": {
+          "level": "info"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "assemble_at": "2026-10-12T12:20:00Z",
+    "merge": {
+      "duplicates": 2,
+      "conflicts": 1
+    },
+    "traces": {
+      "4bf92f3577b34da6a3ce929d0e0e4736": {
+        "status": "ok",
+        "span_count": 2,
+        "conflicts": 1,
+        "flags": {
+          "a100000000000002": [
+            "conflicting_duplicates"
+          ]
+        }
+      }
+    }
+  }
+}

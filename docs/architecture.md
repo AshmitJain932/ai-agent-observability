@@ -1,6 +1,8 @@
 # Architecture — Section 1: Agent Observability
 
-Status: **Phase 0 proposal** (2026-10-12). Working name `aobs` ("agent observability") is a placeholder.
+Status: **Accepted for Phase 1** (2026-10-12; revised after the
+[pre-Phase-1 review](reviews/2026-10-12-pre-phase-1-review.md)). Working name `aobs`
+("agent observability") is a placeholder.
 
 This document describes what we are building first, how the pieces fit, and why. The canonical
 event model is specified separately in [event-model.md](event-model.md); the phase plan and
@@ -69,10 +71,11 @@ aobs/
 │  ├─ src/aobs/integrations/openai_compat/   # first provider adapter
 │  └─ tests/
 ├─ server/                 # package `aobs_server`
+│  ├─ src/aobs_server/model/      # PURE (no I/O): wire models, version policy, merge, trace assembly
 │  ├─ src/aobs_server/api/        # HTTP layer only: routing, request/response models
 │  ├─ src/aobs_server/auth/       # API keys, principals, authorize()
 │  ├─ src/aobs_server/ingest/     # validation, normalization, privacy enforcement, merge
-│  ├─ src/aobs_server/query/      # run list, trace assembly, filters, keyset pagination
+│  ├─ src/aobs_server/query/      # run list, trace retrieval, filters, keyset pagination
 │  ├─ src/aobs_server/pricing/    # versioned price tables + cost estimation
 │  ├─ src/aobs_server/storage/    # SQLAlchemy models, repositories, Alembic migrations
 │  └─ tests/
@@ -82,9 +85,13 @@ aobs/
 └─ docs/
 ```
 
-**Dependency rule:** `api → (auth, ingest, query) → storage`. Storage never imports api; ingest
-and query never import each other. The SDK never imports server code; both depend only on
-`schema/`.
+**Dependency rule:** `api → (auth, ingest, query) → (model, storage)`. `model` imports nothing
+else from the server and performs no I/O, so merge and assembly rules are unit-testable and shared
+by ingest (merging) and query (tree building). Storage never imports api; ingest and query never
+import each other. The SDK never imports server code at runtime; both depend only on `schema/`.
+(SDK *tests* may use `aobs_server.model` to assemble what the SDK emitted.)
+
+The Python packages form a `uv` workspace rooted at the repository root.
 
 ## 4. Technology choices
 
@@ -108,27 +115,41 @@ when each package is created, and APIs are checked against installed versions, n
 1. **Authenticate** — `Authorization: Bearer aobs_ik_…`. Keys are random 32-byte secrets, stored as
    SHA-256 hashes with a short visible prefix. Keys carry scopes (`ingest`, `read`, `admin`) and
    belong to exactly one project. **The project is derived from the key, never from the payload**,
-   so a client cannot write into another project.
+   so a client cannot write into another project. A key may also be **bound to one environment**;
+   a batch whose `resource.environment` differs is rejected (stops a laptop key writing into
+   `production`).
 2. **Limit** — max body 1 MiB (configurable), max 1,000 events per batch, per-key token-bucket rate
    limit (in-process for one replica; moved to Postgres/Redis only when we run several replicas).
-3. **Validate** — envelope and every event against the v1 model. Invalid events are rejected
-   individually; the response lists `accepted`, `duplicate` and `rejected` with reasons, so one bad
-   span does not drop a whole batch (HTTP 207-style body with 200 status).
-4. **Normalize** — clamp/flag clock skew, compute missing duration only when both timestamps
-   exist (marked `derived`), attach server `received_at`, preserve unknown fields in `extra`.
+3. **Parse & validate** — strict JSON parsing (no `NaN`/`Infinity`, no duplicate-key surprises),
+   then the envelope and every event against the v1 model (`aobs_server.model`). An invalid
+   envelope rejects the batch (400); invalid events are rejected individually and the response
+   lists `accepted`, `duplicate` and `rejected` with field paths, so one bad span does not drop a
+   whole batch (200 with a per-event result body). Rejections are permanent: the SDK must not retry
+   them.
+4. **Normalize** — attach server `received_at`; flag (never rewrite) suspected clock skew using
+   `sent_at` vs `received_at`; preserve unknown fields from *newer* minor versions in `extra`.
 5. **Enforce privacy** — the project's capture policy is a *ceiling*: if the project says
-   `metadata_only`, content sent by a misconfigured SDK is dropped and counted. Built-in secret
-   scrubbers (API-key and bearer-token patterns) run on error messages and string attributes.
-6. **Merge** — `span_start` and `span_end` for the same span are merged by natural key
-   `(project_id, trace_id, span_id)` with deterministic rules (end wins for final fields, attributes
-   union, status never moves backwards). Re-sent events are no-ops. This is what makes SDK retries
-   safe.
-7. **Derive** — platform cost estimate from the versioned price table (only when model and token
-   counts are known), then refresh the per-trace summary row for affected traces in the same
-   transaction.
+   `metadata_only`, content sent by a misconfigured SDK is dropped and counted; the same applies to
+   exception messages and stacks. Built-in secret scrubbers (API-key and bearer-token patterns) run
+   on error messages and string attributes.
+6. **Guard** — events for tombstoned (deleted) traces are dropped and counted; spans beyond the
+   per-trace cap (default 10,000) are dropped and the trace is flagged `truncated`.
+7. **Merge** — `span_start` and `span_end` for the same span are merged by natural key
+   `(project_id, trace_id, span_id)` using the rules in `aobs_server.model.merge` (event-model §9):
+   end wins over start; duplicates of the same type are no-ops; *conflicting* duplicates resolve by
+   a content-derived order so the result never depends on arrival order. This is what makes SDK
+   retries safe.
+8. **Derive** — platform cost estimate from the versioned price table (only when model and token
+   counts are known); then, for each affected trace, **lock its summary row** (`INSERT … ON
+   CONFLICT DO NOTHING` then `SELECT … FOR UPDATE`) and recompute it from stored spans. The lock
+   prevents two concurrent batches for the same trace from each writing a summary that misses the
+   other's spans.
+
+The whole batch is one transaction: a database failure rolls everything back and the SDK's retry
+re-applies it idempotently.
 
 Everything after step 3 is synchronous inside the request in Phases 3–6. If ingest latency or
-throughput requires it, steps 4–7 move behind a durable queue (Postgres `SKIP LOCKED` table first,
+throughput requires it, steps 4–8 move behind a durable queue (Postgres `SKIP LOCKED` table first,
 not Kafka) without changing the API contract.
 
 ## 6. Storage design (initial)
@@ -145,11 +166,13 @@ isolation hard to get wrong and makes future partitioning straightforward.
 | `span_events` | Point-in-time events (retry, handoff, stream milestones, custom) | idempotent on `event_id` |
 | `span_content` | Captured prompts/responses/tool args/results | **Separate table** so it can have stricter retention, independent deletion and tighter access later |
 | `resources` | Deduplicated SDK/service/integration descriptors | spans reference by hash |
-| `ingest_diagnostics` | Per-key counters: rejected, dropped content, skew detected | Lets users see why data is missing |
+| `ingest_diagnostics` | Per-key counters: rejected, dropped content, skew detected, tombstone drops, cap drops, merge conflicts | Lets users see why data is missing |
+| `trace_tombstones` | `(project_id, trace_id, deleted_at)` | Stops late events from re-creating a deleted trace |
 
-Retention: a periodic job deletes by `(project_id, started_at < cutoff)`; monthly partitioning of
+Retention: a periodic job deletes by `(project_id, received_at < cutoff)` — server time, because
+client timestamps can be wrong or manipulated. Monthly partitioning of
 `spans`/`span_events`/`span_content` is introduced when volume warrants it. Deletion of a single
-trace is a first-class API from Phase 3.
+trace is a first-class API from Phase 3 and writes a tombstone.
 
 ## 7. Scaling path (documented, not built)
 
@@ -195,6 +218,11 @@ Guarantees:
   retries, last error) and the `aobs` logger emits rate-limited warnings.
 - **Partial runs survive:** spans emit `span_start` so a crash or kill still leaves an
   in-progress/incomplete record on the server instead of nothing.
+- **Start coalescing:** if a span finishes before its `span_start` has left the queue, the start is
+  discarded and only the self-contained `span_end` is sent. Short spans cost one event; long spans
+  still announce themselves within one flush interval.
+- **Batches fit the server limit:** the exporter splits batches so each request stays under the
+  body and event-count limits, including captured content.
 
 Integration layering (each is optional and isolated under `integrations/`):
 
@@ -211,12 +239,22 @@ showing a blank.
 ## 9. Privacy and security model
 
 - **Default capture mode is `metadata_only`**: names, timing, status, model IDs, token counts, error
-  types, tool names and a SHA-256 *fingerprint* of tool arguments (lets us detect repeated identical
-  calls later without storing them). No prompt, response, argument or result content.
+  types and messages (scrubbed), tool names, and an **HMAC-SHA256 input fingerprint** (lets us
+  detect repeated identical calls without storing them). No prompt, response, argument or result
+  content.
+- Fingerprints are keyed, not plain hashes: a plain SHA-256 of `{"order_id": "1042"}` can be
+  reversed by trying every order id. The SDK holds the key — random per process by default (good
+  enough to spot repeats within a run), or a configured stable key (needed to compare across runs
+  and processes). The server never sees the key. The value carries a key id so fingerprints made
+  with different keys are never compared.
 - `redacted` mode captures content after SDK-side redactors run (built-in patterns + user callables).
 - `full` mode captures content subject to size caps (default 32 KiB per field, flagged `truncated`).
-- Exception messages and stack traces are treated as content-adjacent: messages are scrubbed for
-  secrets always; stack traces are captured only when `capture_stack=True`.
+- Exception messages are captured by default (they are the most useful debugging signal) but they
+  can contain personal data, so they are always secret-scrubbed and can be turned off with
+  `capture_error_messages=False`. Stack traces are captured only with `capture_stack=True`. The
+  server's project ceiling applies to both.
+- Instrumentation cannot stop a developer from putting content into span **names** or
+  **attributes**; the SDK docs say not to, and attribute values are size-limited and scrubbed.
 - Project policy on the server is a ceiling over whatever the SDK sends.
 - Dashboard renders all user-supplied strings as text (React escaping, no `dangerouslySetInnerHTML`,
   no markdown rendering of captured content in Phase 4).
@@ -230,11 +268,12 @@ showing a blank.
 | Situation | Behaviour |
 |---|---|
 | Child arrives before parent | Stored immediately; tree resolves when the parent arrives |
-| Parent never arrives | Child shown under the root as **orphaned**, labelled; never re-parented by guess |
+| Parent never arrives | Child listed in a separate **missing parent** group, labelled; never re-parented by guess |
+| Parent pointers form a cycle (incl. a span naming itself) | Cycle members listed as orphans with reason `cycle`; tree walk always terminates |
 | `span_start` without `span_end` | `in_progress` until the project's stale threshold (default 15 min), then **incomplete** — never shown as success |
 | `span_end` without `span_start` | Accepted; end record is self-contained |
 | Duplicate submission | No-op (natural key / `event_id`) |
-| Conflicting duplicate (same key, different final values) | First end wins, conflict counted in diagnostics |
+| Conflicting duplicate (same key, different content) | Deterministic winner (lowest SHA-256 of canonical JSON), conflict counted in diagnostics — same result in every arrival order |
 | Child starts before parent / ends after it (cross-host clocks) | Kept as reported, flagged `clock_skew_suspected` |
 | Several roots in one trace | Allowed (e.g. fan-out workers); UI shows a forest |
 | Async / background work | Child span with link `triggered_by` to the originating span when it runs outside the parent's lifetime |
@@ -253,19 +292,40 @@ showing a blank.
 | Monkey-patching breaks on SDK upgrades | Maintainability | Explicit wrappers on documented public client methods; version range declared per integration; conformance tests per integration |
 | Postgres outgrown | Scale | Repository boundary, project-first keys, partitioning plan, columnar migration path |
 | Auth scope creep (multi-tenant SaaS vs self-hosted) | Security | Org/project/key model from day 1; user login strategy decided before Phase 4 (open decision) |
+| Reversible "anonymous" hashes | Privacy | HMAC fingerprints with an SDK-held key (ADR-011) |
+| Deleted data re-created by late events | Privacy / integrity | Tombstones checked at ingest |
+| Wrong trace summaries under concurrent ingest | Integrity | Per-trace row lock before recompute |
+| Runaway traces (loops) | Cost / availability | Per-trace span cap with `truncated` flag |
 
 ## 12. How Section 1 prepares later sections (without building them)
 
 | Future section | What Section 1 provides now |
 |---|---|
 | 2 Evaluation & testing | Stable `(trace_id, span_id)` addresses for future scores/annotations; agent/prompt/model versions on spans; captured content (when enabled) to build datasets |
-| 3 Security & guardrails | Separate content path with redaction hook; tool name + argument fingerprint on every tool span; reserved `guardrail` span kind and `policy.*` attribute namespace |
-| 4 Reliability | Retry attempts, timeouts and error origins as fields; incomplete-span detection; argument fingerprints for loop detection |
+| 3 Security & guardrails | Separate content path with redaction hook; tool name + input fingerprint on every tool span; reserved `guardrail` span kind and `policy.*` attribute namespace |
+| 4 Reliability | Retry attempts, timeouts and error origins as fields; incomplete-span detection; input fingerprints for loop detection |
 | 5 Cost & performance | Usage with provenance; versioned pricing with calculation basis stored per span |
 | 6 Integrations | Versioned schema, adapter contract, capability declarations, OTel-compatible IDs |
-| 7 Incident investigation | `service_version` (code), `agent.version`, `prompt.version`, model IDs on every span for correlation; full trace retrieval API |
-| 8 Governance | Org → project → environment hierarchy, scoped keys, per-project retention and capture policy, single authorization choke point |
+| 7 Incident investigation | `service_version` (code), `agent.version`, `aobs.prompt.version` attribute, model IDs for correlation; full trace retrieval API |
+| 8 Governance | Org → project → environment hierarchy, scoped and environment-bound keys, per-project retention and capture policy, tombstones, single authorization choke point |
 
-## 13. Open decisions
+## 13. Readiness for the strategic differentiators
+
+These are explored after Section 1's core works (roadmap Phases 9–11). The question for now is only
+whether v1 blocks them or forces a rewrite. It does not; the table shows what each relies on.
+
+| Differentiator | Already in v1 (and why it is needed for Section 1 anyway) | Added later as a backward-compatible minor version | Not needed at all |
+|---|---|---|---|
+| 1. Adaptive telemetry | Capture mode per resource; content in a separate block and table; start coalescing | Sampling metadata on the root span (e.g. rate and decision reason). Old data defaults to "recorded at rate 1" | Per-span sampling flags |
+| 2. Smart failure capture | `span_start` lifecycle (crashed runs visible); per-span `status`/`error`; content only on `span_end`, so a decision made when *that span* ends ("this call failed, keep its input") works today | `capture_reason` on content (e.g. `policy` vs `failure_escalation`). Deciding when the *whole run* ends needs either SDK-side buffering of the run's content or a content-attach event for already-ended spans; Phase 9 measures which costs less | A separate "evidence" store |
+| 3. Agent waste detection | `input_fingerprint` (HMAC) for repeated identical tool/LLM calls; monotonic `duration_ms`; token usage with provenance; ordered siblings | Nothing in the wire schema — this is analysis over stored spans | Storing raw arguments to compare them |
+| 4. Overhead measurement | SDK `diagnostics()` counters (Phase 2); internal benchmark harness (Phases 2 & 8) | An SDK self-measurement event type (queue depth, bytes sent, export time) | — |
+| 5. Evidence-based optimization | Stable trace/span IDs; `service_version`, `agent.version`, prompt version attribute, model IDs to compare before/after | Nothing in the wire schema — this is analysis + recorded experiments | — |
+
+Invariant that keeps this safe: **absence always has a defined meaning**. When sampling metadata
+arrives in a later minor version, old data (without it) is interpreted as unsampled, so aggregates
+stay correct. Analytics in Phase 6 therefore report over "recorded runs" and say so.
+
+## 14. Open decisions
 
 Tracked in [decisions.md](decisions.md) under "Pending".

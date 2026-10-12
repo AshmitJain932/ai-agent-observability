@@ -12,31 +12,51 @@ A phase is closed only when its acceptance criteria pass or the gap is written d
 - [x] Architecture, module boundaries, stack rationale
 - [x] Canonical event model v1 draft with example trace
 - [x] Risks, future-section mapping, phase plan, test strategy
-- [ ] Pending decisions answered (decisions.md → Pending)
+- [ ] Pending decisions answered (decisions.md → Pending) — defaults in use until answered
 
-## Phase 1 — Canonical events & core data model
+A design review before Phase 1 corrected several contradictions and gaps; see
+[reviews/2026-10-12-pre-phase-1-review.md](reviews/2026-10-12-pre-phase-1-review.md).
 
-Build: `schema/v1/ingest.schema.json`; server-side Pydantic models; SDK dataclasses; fixtures
-(`success_run`, `failed_tool_run`, `nested_multi_agent`, `incomplete_run`, `out_of_order`,
-`duplicate_batch`, `unknown_fields_minor_bump`, ~15 invalid cases); `schema/CHANGELOG.md`;
-compatibility policy; a pure-Python trace assembler (events → tree + derived statuses).
+## Phase 1 — Canonical events & core data model ✅ (2026-10-12)
 
-Acceptance:
-- [ ] Every valid fixture passes both the JSON Schema and the Pydantic models; every invalid fixture
-      fails both, with the same field path reported (single conformance test).
-- [ ] Trace assembler produces identical trees for 200 random permutations of each fixture's events
-      (property test).
-- [ ] Missing usage yields `null` + `complete=false` in aggregates; a test asserts no zero-filling.
-- [ ] Unknown top-level fields on a `1.1` payload are preserved in `extra` and do not fail validation.
-- [ ] CI check fails if the schema file changes without a version/CHANGELOG change.
+Build: `schema/v1/ingest.schema.json` + `SCHEMA_LOCK`; `schema/CHANGELOG.md`; strict JSON parsing;
+server-side Pydantic models and version policy in the pure `aobs_server.model` package; fixtures
+(success, failed tool, nested multi-agent, incomplete, out-of-order, duplicate/conflicting,
+newer-minor unknown fields, ~20 invalid cases); deterministic merge; trace assembler (events → tree,
+lifecycles, derived trace status, orphans/cycles, clock-skew flags, token totals with completeness).
+*Moved to Phase 2:* SDK serialization (the SDK package does not exist yet).
+
+Acceptance (all verified by tests in `server/tests/`; 146 passed on Python 3.13 and 3.11):
+- [x] Every valid fixture passes both the JSON Schema and the Pydantic models; every invalid fixture
+      fails both, at the expected field path (`test_conformance.py`; 10 valid, 43 invalid).
+- [x] Differential testing: JSON Schema and Pydantic agree on accept/reject for every single-field
+      mutation of every valid fixture, plus random multi-mutations (`test_differential.py`).
+      Shown to catch four planted drifts (null accepted, negative counts, length limit, extra fields).
+- [x] Trace assembler produces identical results for 200 random permutations (with injected
+      duplicates) of each fixture's events (`test_order_independence.py`). Shown to catch the
+      Phase 0 "first end wins" rule.
+- [x] Conflicting duplicates resolve to the same winner in every order, and are counted (`test_merge.py`).
+- [x] Missing usage yields `null` + `complete=false` in aggregates; no zero-filling (`test_assembly.py`).
+- [x] Unknown fields on a newer-minor payload are preserved in `extra`; the same fields on a `1.0`
+      payload are rejected; an unknown major is rejected (`test_versioning.py`).
+- [x] Cycles (incl. 2,000-span and self-parent) and 5,000-deep chains terminate (`test_assembly.py`).
+- [x] A test fails if the schema file changes without a `SCHEMA_LOCK` + CHANGELOG update
+      (`test_schema_lock.py`).
+- [x] JSON examples in `event-model.md` are validated (`test_docs_examples.py`).
+
+Known gaps carried forward: the SDK serializer joins the conformance suite in Phase 2; size limits
+that JSON Schema cannot express (content parts) are enforced at ingest in Phase 3.
 
 ## Phase 2 — Python SDK & example agent
 
 Build: `aobs` package (stdlib-only core): `init`, `run`, `span`, `@tool`, `@agent`, `event`,
 `flush`, `shutdown`, `diagnostics`; contextvars propagation; exporter (bounded queue, batching,
-backoff); capture modes and redactors; file/console exporter for offline use;
-`integrations/openai_compat` explicit wrapper (sync, async, streaming); deterministic fake model
-for tests; `examples/support_agent` (LLM + 2 tools, a forced-failure mode).
+size-aware batch splitting, backoff, start coalescing); capture modes, redactors and HMAC input
+fingerprints; file/console exporter for offline use; `integrations/openai_compat` explicit wrapper
+(sync, async, streaming); deterministic fake model for tests; `examples/support_agent` (LLM + 2
+tools, a forced-failure mode); SDK serializer added to the Phase 1 conformance suite;
+**overhead micro-benchmark harness** (per-span CPU time, allocations, bytes per event) kept in the
+repo because Phase 9 depends on it.
 
 Acceptance:
 - [ ] Instrumenting the example takes ≤ 10 added lines (counted in the example's diff).
@@ -46,13 +66,19 @@ Acceptance:
 - [ ] With the server unreachable, the app's results and exceptions are unchanged; `diagnostics()`
       reports drops/failures; memory stays under the queue bound.
 - [ ] `metadata_only` mode emits zero content bytes (test scans serialized payloads).
+- [ ] Fingerprints of the same input match within a process and differ across keys; the key never
+      appears in any payload.
+- [ ] Every SDK-emitted batch passes the Phase 1 JSON Schema.
 - [ ] Overhead: < 50 µs median per span on the dev machine (micro-benchmark recorded, not a CI gate).
 
 ## Phase 3 — Ingestion API & storage
 
-Build: FastAPI app; Alembic migrations for tables in architecture.md §6; API keys (create via CLI);
-`POST /v1/ingest`; idempotent merge; trace summary maintenance; size and rate limits; error format
-(RFC 9457 problem+json); trace deletion endpoint; retention job; `GET /v1/projects/{id}/traces/{trace_id}`.
+Build: FastAPI app; Alembic migrations for tables in architecture.md §6; API keys with scopes and
+optional environment binding (create via CLI); `POST /v1/ingest`; idempotent merge reusing
+`aobs_server.model.merge`; trace summary maintenance under a per-trace lock; tombstones; per-trace
+span cap; size and rate limits, including limits JSON Schema cannot express (64 KiB per content
+part); error format (RFC 9457 problem+json); trace deletion endpoint;
+retention job on `received_at`; `GET /v1/projects/{id}/traces/{trace_id}`.
 
 Acceptance:
 - [ ] SDK example → server → stored; retrieved trace equals the SDK-side assembled trace.
@@ -61,6 +87,10 @@ Acceptance:
 - [ ] Key for project A gets 404 (not 403, to avoid existence leaks) on every read of project B.
 - [ ] Bodies > limit → 413; malformed JSON → 400; invalid event → listed in `rejected`, others stored.
 - [ ] Content sent to a `metadata_only` project is not persisted (asserted at the DB level).
+- [ ] Two concurrent batches for the same trace produce a summary equal to a from-scratch
+      recomputation (concurrency test with two connections).
+- [ ] Events for a deleted trace arriving after deletion do not re-create it.
+- [ ] An environment-bound key cannot write another environment.
 - [ ] Tests run against real PostgreSQL 16, not SQLite.
 
 ## Phase 4 — Query API & dashboard
@@ -68,7 +98,8 @@ Acceptance:
 Build: run list endpoint (filters: environment, status, agent, time range, has error, model, tool,
 text search on name; keyset pagination); React SPA: project/env picker, run list, trace view (tree
 + timeline), span detail panel with error, usage, cost, capture-state badges; loading/empty/error
-states; generated TS client.
+states; generated TS client. Dashboard authentication: read-scoped project keys (self-hosted
+default from decision P2); user login is added in Phase 8, or earlier if P2 is answered "SaaS".
 
 Acceptance:
 - [ ] From a fresh `docker compose up` (or native script), running the example shows the run in
@@ -121,13 +152,70 @@ Acceptance:
 
 Build/verify: failure-path tests (network drop mid-batch, server 5xx storms, missing ends,
 duplicates, malformed and oversized payloads, 10k-span traces); auth and redaction test sweep;
-ingest throughput and query latency baselines; server health/readiness endpoints and metrics;
-docs: quickstart, SDK reference, API reference, configuration, architecture, known limitations.
+ingest throughput and query latency baselines; **end-to-end overhead harness** (an agent workload
+run with instrumentation off vs on, measuring added latency, CPU, memory, bytes sent and bytes
+stored per run); server health/readiness endpoints and metrics; docs: quickstart, SDK reference,
+API reference, configuration, architecture, known limitations.
 
 Acceptance (= Section 1 Definition of Done):
 - [ ] Someone new follows the quickstart on a clean machine and reaches a trace in the UI.
 - [ ] Full test suite green in CI on the supported matrix (Python 3.10–3.13, PostgreSQL 16).
 - [ ] Baselines recorded: spans/s ingested per replica, p95 run-list and trace-load latency at 1M spans.
+- [ ] Overhead baseline recorded for the example workload with the harness (repeatable command,
+      results with variance, committed).
+
+---
+
+# After Section 1: strategic differentiators
+
+These start only once Phases 1–8 work end to end. Each one is an **experiment with a measurable
+hypothesis**, evaluated with the Phase 8 harness on recorded workloads, and is kept only if the
+measurement supports it. Dependency order: measurement exists before anything claims to reduce
+overhead.
+
+## Phase 9 — Prototype: adaptive telemetry + smart failure capture
+
+Plan before code: workloads (example agent plus at least one realistic multi-step agent), the
+baseline (Phase 8 numbers), the policy to test (e.g. metadata-only by default; escalate to content
+capture for a run after an error, a retry, or a duration/cost outlier), and success thresholds.
+
+Build: SDK capture policy hook; minor schema version adding sampling/capture-decision metadata with
+defined defaults for old data; decide (by measurement) between SDK-side run buffering and a
+content-attach event.
+
+Acceptance:
+- [ ] Measured: bytes sent and stored per *normal* run drop by a stated target vs. always-on
+      content capture, with added latency within a stated budget.
+- [ ] Measured: for injected failures, the evidence needed to diagnose them (inputs of the failing
+      span and its predecessors) is present in ≥ a stated percentage of failed runs.
+- [ ] Aggregates remain correct when sampling metadata is present or absent.
+
+## Phase 10 — Agent waste detection
+
+Rules over stored spans, each transparent and individually testable: repeated identical calls
+(same kind + name/model + `input_fingerprint` within a run), tool-call loops, retries that never
+succeed, sequential calls that could have run in parallel (non-overlapping independent siblings),
+cache-eligible repeated prompts. Every finding links to the spans that prove it and an estimated
+saving labelled as an estimate.
+
+Acceptance:
+- [ ] Seeded traces with known waste produce exactly the expected findings (no false positives on
+      the clean fixtures).
+- [ ] Each finding's estimated saving is reproducible from the linked spans.
+
+## Phase 11 — Monitoring-overhead measurement (user-facing)
+
+Build: SDK self-measurement events (minor schema version); per-project overhead view: added latency
+per span, SDK CPU and memory, bytes sent, bytes stored, dropped events.
+
+Acceptance:
+- [ ] Reported overhead matches the Phase 8 harness within a stated tolerance on the same workload.
+
+## Later — Evidence-based optimization
+
+Recommendations derived from Phase 10 findings, applied by the user, then verified by comparing
+before/after windows (same agent, `service_version` or `agent.version` change) with a stated
+statistical method. Planned after Phases 9–11 produce real data.
 
 ---
 
@@ -135,12 +223,12 @@ Acceptance (= Section 1 Definition of Done):
 
 | Layer | What | Tools |
 |---|---|---|
-| Contract | Shared fixtures validated by JSON Schema, server models, and SDK serializer | pytest, `jsonschema` |
-| Correctness | Order-independence, merge rules, derived statuses | Hypothesis property tests |
+| Contract | Shared fixtures validated by JSON Schema, server models, and SDK serializer; differential fuzzing between schema and models | pytest, `jsonschema`, Hypothesis |
+| Correctness | Order-independence, merge rules, conflict resolution, derived statuses, cycles | Hypothesis property tests |
 | SDK | Context propagation (async, threads), never-raise guarantee, queue bounds, flush/shutdown, fork, capture modes | pytest, fake transport, fake model |
 | Server | Ingest, idempotency, limits, authz isolation, retention, privacy ceiling | pytest + real Postgres (native `pg_ctl` here; container in CI) |
 | End-to-end | Example agent → server → query API → UI | pytest + Playwright |
 | Security | XSS fixtures, secret scrubbing, cross-project access matrix | pytest, Playwright |
-| Performance | SDK per-span overhead; ingest throughput; query latency on seeded data | pytest-benchmark, scripted load |
+| Performance | SDK per-span overhead; end-to-end overhead harness; ingest throughput; query latency on seeded data | pytest-benchmark, scripted load |
 
 No test calls a paid LLM API by default. Real-provider tests are opt-in via an environment variable.

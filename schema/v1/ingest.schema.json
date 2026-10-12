@@ -1,0 +1,361 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aobs.dev/schema/v1/ingest.schema.json",
+  "title": "aobs ingest batch",
+  "description": "Wire format for POST /v1/ingest. Describes schema version 1.0 exactly. Normative; see docs/event-model.md for semantics that JSON Schema cannot express (merge rules, derived states, version leniency).",
+  "x-schema-version": "1.0",
+  "type": "object",
+  "required": ["schema_version", "sent_at", "resource", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^1\\.(0|[1-9][0-9]{0,3})$" },
+    "batch_id": { "$ref": "#/$defs/uuid" },
+    "sent_at": { "$ref": "#/$defs/timestamp" },
+    "resource": { "$ref": "#/$defs/resource" },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/event" }
+    }
+  },
+  "$defs": {
+    "traceId": { "type": "string", "pattern": "^(?!0{32}$)[0-9a-f]{32}$" },
+    "spanId": { "type": "string", "pattern": "^(?!0{16}$)[0-9a-f]{16}$" },
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "timestamp": {
+      "description": "RFC 3339, UTC ('Z' only). Up to 9 fractional digits are accepted; stored with microsecond precision.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "vocab": {
+      "description": "Open vocabulary: lowercase dotted identifier. Later minor versions may add values.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z0-9_-]+)*$"
+    },
+    "label": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "shortLabel": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "tokenCount": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "durationMs": { "type": "number", "minimum": 0, "maximum": 2592000000 },
+
+    "resource": {
+      "type": "object",
+      "required": ["service_name", "environment", "sdk", "capture"],
+      "additionalProperties": false,
+      "properties": {
+        "service_name": { "$ref": "#/$defs/shortLabel" },
+        "service_version": { "$ref": "#/$defs/shortLabel" },
+        "environment": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$" },
+        "sdk": {
+          "type": "object",
+          "required": ["name", "version", "language"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "language": { "$ref": "#/$defs/vocab" },
+            "runtime": { "$ref": "#/$defs/shortLabel" }
+          }
+        },
+        "integrations": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": ["name", "version", "capabilities"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "$ref": "#/$defs/vocab" },
+              "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "capabilities": {
+                "type": "array",
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/vocab" }
+              }
+            }
+          }
+        },
+        "capture": {
+          "type": "object",
+          "required": ["mode", "error_messages", "stack_traces"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "enum": ["metadata_only", "redacted", "full"] },
+            "error_messages": { "type": "boolean" },
+            "stack_traces": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "attributes": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$" },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "array"],
+        "maxLength": 4096,
+        "maxItems": 128,
+        "items": { "type": ["string", "number", "boolean"], "maxLength": 4096 }
+      }
+    },
+
+    "link": {
+      "type": "object",
+      "required": ["trace_id", "span_id", "relation"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "$ref": "#/$defs/traceId" },
+        "span_id": { "$ref": "#/$defs/spanId" },
+        "relation": { "$ref": "#/$defs/vocab" }
+      }
+    },
+
+    "agent": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/shortLabel" },
+        "id": { "$ref": "#/$defs/shortLabel" },
+        "version": { "$ref": "#/$defs/shortLabel" }
+      }
+    },
+
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "$ref": "#/$defs/vocab" },
+        "operation": { "$ref": "#/$defs/vocab" },
+        "request_model": { "$ref": "#/$defs/label" },
+        "response_model": { "$ref": "#/$defs/label" },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "temperature": { "type": "number" },
+            "top_p": { "type": "number" },
+            "max_tokens": { "$ref": "#/$defs/tokenCount" },
+            "stream": { "type": "boolean" }
+          }
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": { "$ref": "#/$defs/label" },
+            "finish_reasons": {
+              "type": "array",
+              "maxItems": 16,
+              "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+            }
+          }
+        },
+        "provider_request_id": { "$ref": "#/$defs/label" },
+        "streaming": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "time_to_first_token_ms": { "$ref": "#/$defs/durationMs" },
+            "chunk_count": { "$ref": "#/$defs/tokenCount" },
+            "completed": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "tool": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/label" },
+        "type": { "$ref": "#/$defs/vocab" },
+        "call_id": { "$ref": "#/$defs/label" }
+      }
+    },
+
+    "retry": {
+      "type": "object",
+      "required": ["attempt"],
+      "additionalProperties": false,
+      "properties": {
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
+
+    "error": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "#/$defs/label" },
+        "message": { "type": "string", "maxLength": 8192 },
+        "code": { "$ref": "#/$defs/shortLabel" },
+        "origin": { "$ref": "#/$defs/vocab" },
+        "retryable": { "type": "boolean" },
+        "stack": { "type": "string", "maxLength": 32768 }
+      }
+    },
+
+    "usage": {
+      "description": "Token counts. An unknown count is ABSENT (never null, never 0). At least one count is required.",
+      "type": "object",
+      "required": ["source"],
+      "minProperties": 2,
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": { "$ref": "#/$defs/tokenCount" },
+        "output_tokens": { "$ref": "#/$defs/tokenCount" },
+        "total_tokens": { "$ref": "#/$defs/tokenCount" },
+        "cache_read_input_tokens": { "$ref": "#/$defs/tokenCount" },
+        "cache_write_input_tokens": { "$ref": "#/$defs/tokenCount" },
+        "reasoning_tokens": { "$ref": "#/$defs/tokenCount" },
+        "source": { "enum": ["provider_reported", "sdk_estimated"] }
+      }
+    },
+
+    "cost": {
+      "description": "Only for cost reported by the provider itself. Platform estimates are server-derived and never sent by clients.",
+      "type": "object",
+      "required": ["amount", "currency", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "amount": { "type": "string", "pattern": "^(0|[1-9][0-9]{0,14})(\\.[0-9]{1,12})?$" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "source": { "const": "provider_reported" }
+      }
+    },
+
+    "contentPart": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["captured", "redacted", "not_captured", "unavailable"] },
+        "format": { "enum": ["text", "messages", "json"] },
+        "value": true,
+        "truncated": { "type": "boolean" },
+        "redaction_count": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "enum": ["captured", "redacted"] } } },
+          "then": { "required": ["format", "value"] },
+          "else": {
+            "properties": { "format": false, "value": false, "truncated": false, "redaction_count": false }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "captured" } } },
+          "then": { "properties": { "redaction_count": false } }
+        }
+      ]
+    },
+
+    "content": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "input": { "$ref": "#/$defs/contentPart" },
+        "output": { "$ref": "#/$defs/contentPart" }
+      }
+    },
+
+    "spanFields": {
+      "description": "Fields allowed on both span_start and span_end.",
+      "type": "object",
+      "properties": {
+        "trace_id": { "$ref": "#/$defs/traceId" },
+        "span_id": { "$ref": "#/$defs/spanId" },
+        "parent_span_id": {
+          "description": "Always present. null means this span is a root.",
+          "type": ["string", "null"],
+          "pattern": "^(?!0{16}$)[0-9a-f]{16}$"
+        },
+        "kind": { "$ref": "#/$defs/vocab" },
+        "name": { "$ref": "#/$defs/label" },
+        "start_time": { "$ref": "#/$defs/timestamp" },
+        "links": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/link" } },
+        "session_id": { "$ref": "#/$defs/label" },
+        "agent": { "$ref": "#/$defs/agent" },
+        "llm": { "$ref": "#/$defs/llm" },
+        "tool": { "$ref": "#/$defs/tool" },
+        "retry": { "$ref": "#/$defs/retry" },
+        "input_fingerprint": {
+          "description": "HMAC-SHA256 of the canonical JSON input, keyed by an SDK-held key: hmac-sha256:<key_id>:<64 hex>.",
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-z0-9_-]{1,32}:[0-9a-f]{64}$"
+        },
+        "attributes": { "$ref": "#/$defs/attributes" }
+      }
+    },
+
+    "spanStart": {
+      "type": "object",
+      "required": ["type", "trace_id", "span_id", "parent_span_id", "kind", "name", "start_time"],
+      "allOf": [{ "$ref": "#/$defs/spanFields" }],
+      "properties": { "type": { "const": "span_start" } },
+      "unevaluatedProperties": false
+    },
+
+    "spanEnd": {
+      "type": "object",
+      "required": ["type", "trace_id", "span_id", "parent_span_id", "kind", "name", "start_time",
+                   "end_time", "duration_ms", "status"],
+      "allOf": [
+        { "$ref": "#/$defs/spanFields" },
+        {
+          "if": { "properties": { "kind": { "const": "tool" } } },
+          "then": { "required": ["tool"] }
+        }
+      ],
+      "properties": {
+        "type": { "const": "span_end" },
+        "end_time": { "$ref": "#/$defs/timestamp" },
+        "duration_ms": { "$ref": "#/$defs/durationMs" },
+        "status": { "enum": ["ok", "error", "cancelled"] },
+        "error": { "$ref": "#/$defs/error" },
+        "usage": { "$ref": "#/$defs/usage" },
+        "cost": { "$ref": "#/$defs/cost" },
+        "content": { "$ref": "#/$defs/content" }
+      },
+      "unevaluatedProperties": false
+    },
+
+    "spanEvent": {
+      "type": "object",
+      "required": ["type", "event_id", "trace_id", "span_id", "name", "time"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "span_event" },
+        "event_id": { "$ref": "#/$defs/uuid" },
+        "trace_id": { "$ref": "#/$defs/traceId" },
+        "span_id": { "$ref": "#/$defs/spanId" },
+        "name": { "$ref": "#/$defs/shortLabel" },
+        "time": { "$ref": "#/$defs/timestamp" },
+        "attributes": { "$ref": "#/$defs/attributes" }
+      }
+    },
+
+    "event": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "enum": ["span_start", "span_end", "span_event"] } },
+      "allOf": [
+        { "if": { "required": ["type"], "properties": { "type": { "const": "span_start" } } },
+          "then": { "$ref": "#/$defs/spanStart" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "span_end" } } },
+          "then": { "$ref": "#/$defs/spanEnd" } },
+        { "if": { "required": ["type"], "properties": { "type": { "const": "span_event" } } },
+          "then": { "$ref": "#/$defs/spanEvent" } }
+      ]
+    }
+  }
+}

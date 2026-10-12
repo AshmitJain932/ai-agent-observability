@@ -1,0 +1,188 @@
+{
+  "description": "Agent run: LLM call, tool call, LLM call; all usage reported; one span event.",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "metadata_only",
+        "error_messages": true,
+        "stack_traces": false
+      }
+    },
+    "events": [
+      {
+        "type": "span_start",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "answer_ticket",
+        "start_time": "2026-10-12T12:15:00.000000Z",
+        "session_id": "ticket-8812",
+        "agent": {
+          "name": "triage",
+          "version": "1.4.0"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000001",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "llm",
+        "name": "chat",
+        "start_time": "2026-10-12T12:15:00.010000Z",
+        "end_time": "2026-10-12T12:15:00.920000Z",
+        "duration_ms": 910.2,
+        "status": "ok",
+        "llm": {
+          "provider": "openai",
+          "operation": "chat",
+          "request_model": "model-x",
+          "response_model": "model-x-2026-08-01",
+          "request": {
+            "temperature": 0.2,
+            "max_tokens": 512,
+            "stream": false
+          },
+          "response": {
+            "id": "resp_1",
+            "finish_reasons": [
+              "tool_calls"
+            ]
+          }
+        },
+        "usage": {
+          "input_tokens": 812,
+          "output_tokens": 95,
+          "total_tokens": 907,
+          "source": "provider_reported"
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000002",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "tool",
+        "name": "get_order_status",
+        "start_time": "2026-10-12T12:15:00.930000Z",
+        "end_time": "2026-10-12T12:15:01.050000Z",
+        "duration_ms": 120.4,
+        "status": "ok",
+        "tool": {
+          "name": "get_order_status",
+          "type": "function",
+          "call_id": "call_abc123"
+        },
+        "input_fingerprint": "hmac-sha256:p1:9f2c4e0000000000000000000000000000000000000000000000000000000000",
+        "content": {
+          "input": {
+            "status": "not_captured"
+          },
+          "output": {
+            "status": "not_captured"
+          }
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000003",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "llm",
+        "name": "chat",
+        "start_time": "2026-10-12T12:15:01.060000Z",
+        "end_time": "2026-10-12T12:15:02.260000Z",
+        "duration_ms": 1200.0,
+        "status": "ok",
+        "llm": {
+          "provider": "openai",
+          "operation": "chat",
+          "request_model": "model-x"
+        },
+        "usage": {
+          "input_tokens": 950,
+          "output_tokens": 60,
+          "source": "provider_reported"
+        }
+      },
+      {
+        "type": "span_event",
+        "event_id": "0192f4a1-7c3e-7b10-9a2d-5f6e1c0b8d41",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "a100000000000003",
+        "name": "stream.first_chunk",
+        "time": "2026-10-12T12:15:01.372000Z"
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "answer_ticket",
+        "start_time": "2026-10-12T12:15:00.000000Z",
+        "end_time": "2026-10-12T12:15:02.300000Z",
+        "duration_ms": 2300.5,
+        "status": "ok",
+        "session_id": "ticket-8812",
+        "agent": {
+          "name": "triage",
+          "version": "1.4.0"
+        }
+      }
+    ],
+    "batch_id": "0192f4a1-0000-7000-8000-000000000001"
+  },
+  "expect": {
+    "valid": true,
+    "assemble_at": "2026-10-12T12:20:00Z",
+    "merge": {
+      "duplicates": 0,
+      "conflicts": 0
+    },
+    "traces": {
+      "4bf92f3577b34da6a3ce929d0e0e4736": {
+        "status": "ok",
+        "roots": [
+          "00f067aa0ba902b7"
+        ],
+        "orphans": [],
+        "span_count": 4,
+        "error_count": 0,
+        "children": {
+          "00f067aa0ba902b7": [
+            "a100000000000001",
+            "a100000000000002",
+            "a100000000000003"
+          ]
+        },
+        "tokens": {
+          "input_tokens": {
+            "value": 1762,
+            "reported_spans": 2,
+            "expected_spans": 2,
+            "complete": true
+          },
+          "total_tokens": {
+            "value": 907,
+            "reported_spans": 1,
+            "expected_spans": 2,
+            "complete": false
+          }
+        }
+      }
+    }
+  }
+}

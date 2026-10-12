@@ -1,0 +1,117 @@
+{
+  "description": "Tool times out, run fails; second LLM call has no usage (streaming) so totals are partial.",
+  "payload": {
+    "schema_version": "1.0",
+    "sent_at": "2026-10-12T12:15:10.000000Z",
+    "resource": {
+      "service_name": "support-agent",
+      "service_version": "git:3f9c2e1",
+      "environment": "production",
+      "sdk": {
+        "name": "aobs-python",
+        "version": "0.1.0",
+        "language": "python",
+        "runtime": "cpython-3.12.4"
+      },
+      "capture": {
+        "mode": "metadata_only",
+        "error_messages": true,
+        "stack_traces": false
+      }
+    },
+    "events": [
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "b100000000000001",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "llm",
+        "name": "chat",
+        "start_time": "2026-10-12T12:15:00.010000Z",
+        "end_time": "2026-10-12T12:15:00.900000Z",
+        "duration_ms": 890.0,
+        "status": "ok",
+        "llm": {
+          "provider": "openai",
+          "operation": "chat",
+          "request_model": "model-x",
+          "request": {
+            "stream": true
+          },
+          "streaming": {
+            "time_to_first_token_ms": 312.4,
+            "chunk_count": 41,
+            "completed": true
+          }
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "b100000000000002",
+        "parent_span_id": "00f067aa0ba902b7",
+        "kind": "tool",
+        "name": "issue_refund",
+        "start_time": "2026-10-12T12:15:01.000000Z",
+        "end_time": "2026-10-12T12:15:01.500000Z",
+        "duration_ms": 500.2,
+        "status": "error",
+        "tool": {
+          "name": "issue_refund",
+          "type": "http"
+        },
+        "error": {
+          "type": "TimeoutError",
+          "message": "refund API did not respond within 500 ms",
+          "origin": "timeout",
+          "retryable": true
+        }
+      },
+      {
+        "type": "span_end",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "span_id": "00f067aa0ba902b7",
+        "parent_span_id": null,
+        "kind": "agent",
+        "name": "answer_ticket",
+        "start_time": "2026-10-12T12:15:00.000000Z",
+        "end_time": "2026-10-12T12:15:01.600000Z",
+        "duration_ms": 1600.0,
+        "status": "error",
+        "error": {
+          "type": "ToolError",
+          "origin": "tool"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "valid": true,
+    "assemble_at": "2026-10-12T12:20:00Z",
+    "traces": {
+      "4bf92f3577b34da6a3ce929d0e0e4736": {
+        "status": "error",
+        "roots": [
+          "00f067aa0ba902b7"
+        ],
+        "orphans": [],
+        "span_count": 3,
+        "error_count": 2,
+        "children": {
+          "00f067aa0ba902b7": [
+            "b100000000000001",
+            "b100000000000002"
+          ]
+        },
+        "tokens": {
+          "input_tokens": {
+            "value": null,
+            "reported_spans": 0,
+            "expected_spans": 1,
+            "complete": false
+          }
+        }
+      }
+    }
+  }
+}
