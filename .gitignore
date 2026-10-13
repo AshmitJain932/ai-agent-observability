@@ -7,3 +7,5 @@ __pycache__/
 *.egg-info/
 .venv-*/
 traces.jsonl
+my_run.jsonl
+my_samples/

@@ -16,6 +16,8 @@ cost — as nested traces, regardless of framework or model provider.
 | OpenAI-compatible integration (sync/async/streaming) | `aobs.integrations.openai_compat` | Done — tested with `openai` 3.29.0 |
 | Example tool-calling agent, mock and live modes | `examples/support_agent/` | Done |
 | Overhead benchmark + recorded baseline | `sdk/python/benchmarks/`, [docs/benchmarks.md](docs/benchmarks.md) | Done |
+| Offline trace diagnosis (`aobs-server analyze`): deterministic rules, evidence, suggestions | `server/src/aobs_server/diagnosis/`, [examples/diagnose](examples/diagnose/README.md) | Demo (no server or database needed) |
+| Server foundations: PostgreSQL schema + migrations, API keys, authorization, ingest privacy step | `server/src/aobs_server/` | Phase 3 in progress (not yet serving HTTP) |
 | Ingestion API, storage, auth | — | Phase 3 |
 | Query API, dashboard | — | Phase 4 |
 
@@ -30,6 +32,15 @@ uv run python examples/support_agent/run.py --scenario refund-outage    # no API
 
 Prints the agent's answer, then the trace the collector will reconstruct (validated with the
 Phase 1 model library). See [examples/support_agent/README.md](examples/support_agent/README.md).
+
+Diagnose a recorded run (errors, repeated failures, wasted calls, bottlenecks, with evidence and
+suggestions; content is never shown):
+
+```bash
+uv run aobs-server analyze examples/diagnose/traces/retry_storm.jsonl
+```
+
+See [examples/diagnose/README.md](examples/diagnose/README.md).
 
 ## Development
 

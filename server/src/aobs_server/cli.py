@@ -172,6 +172,41 @@ def _key_revoke(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _analyze(args: argparse.Namespace, settings: Settings) -> int:
+    import io
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from .diagnosis import RuleConfig, build_report, render_text
+    from .diagnosis.rules import SEVERITY_ORDER
+
+    paths = [Path(p) for p in args.paths]
+    for path in paths:
+        if not path.is_file():
+            raise CommandError(f"no such file: {path}")
+    if not 0 < args.slow_share <= 1:
+        raise ConfigError("--slow-share must be in (0, 1]")
+    report = build_report(
+        paths,
+        datetime.now(UTC),
+        RuleConfig(slow_share=args.slow_share, slow_min_ms=args.slow_min_ms),
+        error_messages=not args.no_error_messages,
+        trace_id=args.trace,
+    )
+    if isinstance(sys.stdout, io.TextIOWrapper):  # e.g. a Windows console that cannot print every character
+        sys.stdout.reconfigure(errors="replace")
+    if args.json:
+        _print(report.to_dict())
+    else:
+        print(render_text(report))
+    if not report.traces:
+        return 1
+    worst = report.worst_severity()
+    if args.fail_on and worst and SEVERITY_ORDER[worst] <= SEVERITY_ORDER[args.fail_on]:
+        return 3
+    return 0
+
+
 # --------------------------------------------------------------------------- parser
 
 
@@ -228,6 +263,21 @@ def build_parser() -> argparse.ArgumentParser:
     key_revoke = key.add_parser("revoke", help="revoke a key immediately")
     key_revoke.add_argument("--key-id", required=True)
     key_revoke.set_defaults(handler=_key_revoke)
+
+    analyze = commands.add_parser(
+        "analyze",
+        help="diagnose saved traces (SDK JSONL files); no database or server needed",
+        description="Diagnose saved traces with deterministic rules. Content is never shown; error messages "
+        "are secret-scrubbed. Exit codes: 0 report printed, 1 no traces found, 3 --fail-on threshold reached.",
+    )
+    analyze.add_argument("paths", nargs="+", metavar="FILE", help="JSONL from JsonlFileExporter, or a JSON batch")
+    analyze.add_argument("--json", action="store_true", help="machine-readable output")
+    analyze.add_argument("--trace", metavar="ID", help="only the trace whose id starts with ID")
+    analyze.add_argument("--no-error-messages", action="store_true", help="omit error messages entirely")
+    analyze.add_argument("--slow-share", type=float, default=0.5, help="bottleneck share of the run (default 0.5)")
+    analyze.add_argument("--slow-min-ms", type=float, default=100.0, help="bottleneck minimum duration (default 100)")
+    analyze.add_argument("--fail-on", choices=["error", "warning", "info"], help="exit 3 if a finding is this severe")
+    analyze.set_defaults(handler=_analyze)
     return parser
 
 
