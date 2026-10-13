@@ -77,9 +77,10 @@ always shown. Error *messages* are shown after scrubbing, or not at all with
 It shows a complete, offline path: SDK instrumentation, the JSONL file, validation (the Phase 1
 model), privacy enforcement (M4), trace assembly, diagnosis, and the report.
 
-It does **not** use the collector's HTTP ingestion or PostgreSQL storage. Those are not wired up
-yet (Phase 3, M5/M6). The rules work on an assembled trace, so they will run on stored traces
-unchanged once that exists.
+It does **not** use the collector's HTTP ingestion or PostgreSQL storage. The collector can now
+store runs ([docs/ingestion.md](../../docs/ingestion.md)), but diagnosis does not read them yet. The
+rules work on an assembled trace, so they will run on stored traces unchanged once a read path
+exists.
 
 ---
 

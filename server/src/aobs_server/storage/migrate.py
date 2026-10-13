@@ -18,6 +18,15 @@ def alembic_config(url: URL | str) -> Config:
     return config
 
 
+def head_revision() -> str | None:
+    """The latest migration shipped with this server."""
+    from alembic.script import ScriptDirectory
+
+    config = Config()
+    config.set_main_option("script_location", SCRIPT_LOCATION)
+    return ScriptDirectory.from_config(config).get_current_head()
+
+
 def upgrade(url: URL | str, revision: str = "head") -> None:
     command.upgrade(alembic_config(url), revision)
 

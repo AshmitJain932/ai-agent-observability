@@ -291,6 +291,45 @@ def _compare_groups(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _serve(args: argparse.Namespace, settings: Settings) -> int:
+    import logging
+
+    import uvicorn
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from .api import create_app
+    from .storage import migrate
+    from .storage.db import make_engine
+
+    if not 1 <= args.port <= 65535:
+        raise ConfigError("--port must be between 1 and 65535")
+    engine = make_engine(settings.require_database_url())
+    try:
+        current = migrate.current_revision(engine)
+    except SQLAlchemyError as exc:
+        engine.dispose()
+        raise CommandError(f"cannot connect to the database ({type(exc).__name__}); check AOBS_DATABASE_URL") from None
+    head = migrate.head_revision()
+    if current != head:
+        engine.dispose()
+        raise CommandError(f"the database schema is at revision {current}, not {head}: run `aobs-server db upgrade`")
+    # Only the server's own loggers at INFO: SQLAlchemy at INFO or DEBUG would log statements and rows.
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    aobs_logger = logging.getLogger("aobs")
+    aobs_logger.addHandler(handler)
+    aobs_logger.setLevel(logging.INFO)
+    logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+    print(f"aobs collector on http://{args.host}:{args.port}/  (POST /v1/ingest)", flush=True)
+    print(f"  limits: {settings.max_body_bytes} bytes and {settings.max_events_per_batch} events per batch", flush=True)
+    print("  press Ctrl+C to stop", flush=True)
+    try:
+        uvicorn.run(create_app(settings, engine), host=args.host, port=args.port, log_level="info")
+    finally:
+        engine.dispose()
+    return 0
+
+
 def _dashboard(args: argparse.Namespace, settings: Settings) -> int:
     import ipaddress
     import os
@@ -443,6 +482,16 @@ def build_parser() -> argparse.ArgumentParser:
     groups.add_argument("--min-op-ms", type=float, default=20.0, help="practical per-call slowdown in ms (default 20)")
     groups.add_argument("--fail-on", choices=["error", "warning", "info"], help="exit 3 if a finding is this severe")
     groups.set_defaults(handler=_compare_groups)
+
+    serve = commands.add_parser(
+        "serve",
+        help="run the collector API (POST /v1/ingest) against PostgreSQL",
+        description="Serve the authenticated ingestion API. Needs AOBS_DATABASE_URL and a database migrated with "
+        "`aobs-server db upgrade`; refuses to start otherwise.",
+    )
+    serve.add_argument("--host", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
+    serve.add_argument("--port", type=int, default=8000, help="port (default 8000)")
+    serve.set_defaults(handler=_serve)
 
     dash = commands.add_parser(
         "dashboard",

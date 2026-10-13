@@ -6,8 +6,8 @@
     AOBS_EXAMPLE_MODE=live OPENAI_API_KEY=... AOBS_EXAMPLE_MODEL=<model> \\
         uv run python examples/support_agent/run.py                    # real OpenAI-compatible API
 
-Telemetry is written to a JSON-lines file (``--out``, default ``traces.jsonl``) because the
-collector does not exist until Phase 3; ``--endpoint`` sends it over HTTP instead. Afterwards the
+Telemetry is written to a JSON-lines file (``--out``, default ``traces.jsonl``);
+``--endpoint`` sends it to the collector (``aobs-server serve``, key in ``AOBS_API_KEY``) instead. Afterwards the
 script validates the file with the Phase 1 model library and prints the reconstructed trace —
 exactly what the collector will see.
 """
@@ -56,7 +56,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--capture", choices=["metadata_only", "redacted", "full"], default="metadata_only")
     parser.add_argument("--no-usage", action="store_true", help="mock model omits usage (shows 'unknown')")
     parser.add_argument("--out", default="traces.jsonl")
-    parser.add_argument("--endpoint", help="send to a collector instead of the file (Phase 3+)")
+    parser.add_argument(
+        "--endpoint", help="send to a collector (aobs-server serve; key in AOBS_API_KEY) instead of the file"
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 

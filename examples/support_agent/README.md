@@ -25,8 +25,8 @@ AOBS_EXAMPLE_MODE=live OPENAI_API_KEY=... AOBS_EXAMPLE_MODEL=<model name> \
 # any OpenAI-compatible server: also set OPENAI_BASE_URL
 ```
 
-Telemetry goes to `traces.jsonl` (mode 0600) because the collector arrives in Phase 3
-(`--endpoint URL` sends it over HTTP instead). The script then validates the file with the Phase 1
+Telemetry goes to `traces.jsonl` (mode 0600) by default. `--endpoint URL` with `AOBS_API_KEY` set
+sends it to the collector instead ([docs/ingestion.md](../../docs/ingestion.md)). The script then validates the file with the Phase 1
 model library and prints the trace as the collector will reconstruct it:
 
 ```

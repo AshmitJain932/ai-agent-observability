@@ -105,6 +105,33 @@ events rejected individually (counted by the SDK, never retried). 408/429/5xx = 
 (`Retry-After` in seconds honoured). Other 4xx = permanent failure. 3xx is never followed.
 **Consequence.** Phase 3 adds a contract test running the SDK's `HttpExporter` against the real API.
 
+## ADR-015 — Ingest semantics: per-event results, digest idempotency, per-trace locks · Accepted (2026-10-13)
+**Context.** `POST /v1/ingest` must be safe under SDK retries, out-of-order delivery and
+concurrent writers, without a queue (ADR-008) and without claiming exactly-once delivery.
+**Decision.**
+- **Validation.** An invalid envelope rejects the batch (400). Valid events are processed
+  individually: each gets exactly one of `accepted`, `duplicate`, `dropped` or `rejected`, still
+  with 200 (ADR-014).
+- **One transaction per batch.** Any database failure stores nothing (500/503), so the retry
+  starts clean.
+- **Idempotency is per event and content-based.** An event's key is (trace, span, start|end), or
+  the `event_id`. Its content is the SHA-256 of its post-privacy canonical JSON. The existing
+  `*_digests` columns record which copies were seen (lowest 16, always including the winner), so
+  no migration was needed and `batch_id` is informational only.
+- **Locking.** Every affected trace row is locked with one multi-row
+  `INSERT … ON CONFLICT DO UPDATE … RETURNING`, in trace-id order. Inserting first and then
+  `SELECT … FOR UPDATE` would lock new and existing rows in different orders and can deadlock
+  overlapping batches. All writes for a trace happen under its lock, and the summary is recomputed
+  from stored rows with the shared assembly code.
+- **Span event ids** are bound to the trace and span of their first stored copy; a copy naming
+  another trace is rejected (`event_id_conflict`).
+
+**Consequence.** Resending is harmless and the stored trace is independent of arrival order
+(tested by permutation and concurrency tests). The summary costs O(spans in trace) per batch,
+which is acceptable under the 10,000-span cap; it may move to incremental updates if measurements
+require it. A retry after a project's privacy settings changed is counted as a conflict rather
+than a duplicate.
+
 ---
 
 ## Pending decisions

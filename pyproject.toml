@@ -36,4 +36,4 @@ plugins = ["pydantic.mypy"]
 mypy_path = ["server/src", "sdk/python/src"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["aobs", "aobs_server", "support", "sdk_support", "pg", "tenants"]
+known-first-party = ["aobs", "aobs_server", "support", "sdk_support", "pg", "tenants", "ingest_support"]

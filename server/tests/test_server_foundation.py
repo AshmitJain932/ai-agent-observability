@@ -35,6 +35,29 @@ def test_non_postgres_or_malformed_urls_are_rejected(raw: str) -> None:
         Settings.from_env({"AOBS_DATABASE_URL": raw})
 
 
+def test_ingest_limits_from_environment() -> None:
+    settings = Settings.from_env({"AOBS_MAX_BODY_BYTES": "65536", "AOBS_MAX_EVENTS_PER_BATCH": "100"})
+    assert (settings.max_body_bytes, settings.max_events_per_batch) == (65536, 100)
+    assert (Settings().max_body_bytes, Settings().max_events_per_batch) == (1_048_576, 1000)
+
+
+@pytest.mark.parametrize(
+    ("name", "raw"),
+    [
+        ("AOBS_MAX_BODY_BYTES", "10"),
+        ("AOBS_MAX_BODY_BYTES", "1.5e6"),
+        ("AOBS_MAX_BODY_BYTES", "999999999"),
+        ("AOBS_MAX_EVENTS_PER_BATCH", "0"),
+        ("AOBS_MAX_EVENTS_PER_BATCH", "1001"),  # the wire schema allows at most 1000
+        ("AOBS_MAX_EVENTS_PER_BATCH", "-5"),
+        ("AOBS_MAX_EVENTS_PER_BATCH", "\u00b2"),  # a non-ASCII digit
+    ],
+)
+def test_ingest_limits_are_validated(name: str, raw: str) -> None:
+    with pytest.raises(ConfigError, match=name):
+        Settings.from_env({name: raw})
+
+
 def test_describe_masks_the_password() -> None:
     shown = Settings.from_env({"AOBS_DATABASE_URL": "postgresql://aobs:s3cr3t-pw@db/aobs"}).describe()
     assert shown["database_url"] is not None
