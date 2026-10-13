@@ -247,6 +247,50 @@ def _compare(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _compare_groups(args: argparse.Namespace, settings: Settings) -> int:
+    import io
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from .diagnosis import GroupConfig, NoRunsError, build_group_report, render_group_text
+    from .diagnosis.rules import SEVERITY_ORDER
+
+    baseline = [Path(p) for p in args.baseline]
+    current = [Path(p) for p in args.current]
+    for path in [*baseline, *current]:
+        if not path.is_file():
+            raise CommandError(f"no such file: {path}")
+    if args.min_runs < 3:
+        raise ConfigError("--min-runs must be at least 3 (fewer can never give a conclusive rank test)")
+    if not 0 < args.alpha < 1:
+        raise ConfigError("--alpha must be between 0 and 1")
+    if args.min_change_pct < 0 or args.min_run_ms < 0 or args.min_op_ms < 0:
+        raise ConfigError("--min-change-pct, --min-run-ms and --min-op-ms must not be negative")
+    config = GroupConfig(
+        min_runs=args.min_runs,
+        alpha=args.alpha,
+        min_change_pct=args.min_change_pct,
+        min_run_ms=args.min_run_ms,
+        min_op_ms=args.min_op_ms,
+    )
+    try:
+        report = build_group_report(
+            baseline, current, datetime.now(UTC), config, task=args.task, error_messages=not args.no_error_messages
+        )
+    except NoRunsError as exc:
+        raise CommandError(str(exc)) from None
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="replace")
+    if args.json:
+        _print(report.to_dict())
+    else:
+        print(render_group_text(report))
+    worst = report.severity()
+    if args.fail_on and worst and SEVERITY_ORDER[worst] <= SEVERITY_ORDER[args.fail_on]:
+        return 3
+    return 0
+
+
 # --------------------------------------------------------------------------- parser
 
 
@@ -337,6 +381,28 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--min-op-ms", type=float, default=50.0, help="smallest per-call slowdown (default 50)")
     compare.add_argument("--fail-on", choices=["error", "warning", "info"], help="exit 3 if a finding is this severe")
     compare.set_defaults(handler=_compare)
+
+    groups = commands.add_parser(
+        "compare-groups",
+        help="compare repeated runs of a task (baseline group vs current group) with small-sample statistics",
+        description="Compare every run in the --baseline files with every run in the --current files. Each metric "
+        "gets medians, variation, a rank or exact test (Holm-adjusted) and a verdict that needs both statistical "
+        "evidence and a practically relevant change. Exit codes: 0 report printed, 1 unreadable input or no runs, "
+        "2 invalid options, 3 --fail-on reached (error: a likely regression; warning: also a weak signal of a "
+        "regression or a comparability warning).",
+    )
+    groups.add_argument("--baseline", nargs="+", required=True, metavar="FILE", help="trace files of the baseline runs")
+    groups.add_argument("--current", nargs="+", required=True, metavar="FILE", help="trace files of the current runs")
+    groups.add_argument("--task", metavar="NAME", help="only runs whose run (root span) name is NAME")
+    groups.add_argument("--json", action="store_true", help="machine-readable output")
+    groups.add_argument("--no-error-messages", action="store_true", help="omit error messages entirely")
+    groups.add_argument("--min-runs", type=int, default=5, help="usable runs per group needed for a test (default 5)")
+    groups.add_argument("--alpha", type=float, default=0.05, help="significance level after Holm (default 0.05)")
+    groups.add_argument("--min-change-pct", type=float, default=20.0, help="practical relative change (default 20)")
+    groups.add_argument("--min-run-ms", type=float, default=50.0, help="practical run slowdown in ms (default 50)")
+    groups.add_argument("--min-op-ms", type=float, default=20.0, help="practical per-call slowdown in ms (default 20)")
+    groups.add_argument("--fail-on", choices=["error", "warning", "info"], help="exit 3 if a finding is this severe")
+    groups.set_defaults(handler=_compare_groups)
     return parser
 
 

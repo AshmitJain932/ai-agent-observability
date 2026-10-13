@@ -200,3 +200,182 @@ supplier call and a slower summary step.
   `answer_ticket` runs answered different questions.
 - **Input fingerprints are not compared across runs.** The SDK's default fingerprint key is random per
   process.
+
+---
+
+# Demo: repeated runs, with statistics
+
+A single comparison can't tell a real slowdown from an unlucky run.
+`aobs-server compare-groups` takes **several recordings of the same task** before and after a
+change. It reports, metric by metric, whether the difference is larger than ordinary run-to-run
+variation, and whether it is large enough to matter. It needs no database, server or LLM, and it
+never shows content.
+
+```
+aobs-server compare-groups --baseline FILE [FILE ...] --current FILE [FILE ...] [options]
+```
+
+Every run in the `--baseline` files forms one group, and every run in the `--current` files the
+other. Files may hold one run or many; the SDK's JSONL exporter appends each run.
+
+## Run it
+
+```bash
+# Normal variation: two groups of healthy runs. Expected: no findings
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/groups/healthy_rerun.jsonl
+
+# A genuine slowdown across 10 runs. Expected: LIKELY REGRESSION in run duration and search duration
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/groups/slow.jsonl
+
+# More failures and retries. Expected: LIKELY REGRESSION in failed runs, retries and calls, plus a new error type
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/groups/flaky.jsonl
+
+# One 1.5 s cold start among 10 runs. Expected: no regression claimed; the outlier is listed
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/groups/outlier.jsonl
+
+# Only 3 current runs. Expected: INSUFFICIENT DATA (the slowdown is shown, but no conclusion is drawn)
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/groups/few_runs.jsonl
+
+# 6 of 10 runs lack usage and cost on one model call. Expected: tokens and cost INSUFFICIENT DATA, with exclusions counted
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/groups/partial_usage.jsonl
+
+# Different tasks in the two groups. Expected: comparability warnings
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/compare/refund_ok.jsonl examples/diagnose/compare/refund_ok_rerun.jsonl
+
+# Machine-readable output, and exit code 3 when a likely regression is found (for CI)
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/groups/slow.jsonl --json
+uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.jsonl --current examples/diagnose/groups/slow.jsonl --fail-on error
+
+# Re-record all groups with the real SDK (about 10 s)
+uv run python examples/diagnose/make_group_samples.py --out my_groups
+```
+
+**Options**
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--task NAME` | — | Keep only runs whose run (root span) name is NAME |
+| `--min-runs N` | 5 | Usable runs needed in *each* group before any test is run |
+| `--alpha A` | 0.05 | Significance level, applied to the Holm-adjusted p-values |
+| `--min-change-pct` | 20 | Practical threshold: relative change |
+| `--min-run-ms` | 50 | Practical threshold: absolute change in run duration |
+| `--min-op-ms` | 20 | Practical threshold: absolute change in an operation's per-call duration |
+| `--json`, `--no-error-messages`, `--fail-on` | — | As for `analyze` and `compare` |
+
+**Exit codes:** 0 report printed, 1 unreadable input or no runs, 2 invalid options, 3 `--fail-on`
+reached. With `--fail-on error`, any likely regression triggers it. With `--fail-on warning`, so does
+a weak signal in the worse direction, or a comparability warning.
+
+## What is measured
+
+**Per run** (finished runs only):
+- total duration;
+- whether the run failed;
+- retry attempts;
+- tool calls;
+- whether it repeated an identical call;
+- input and output tokens, only if every model call reported them;
+- provider-reported cost, only if every model call reported it, in a single currency.
+
+**Per operation:** matched across runs by span kind and tool or span name, never by span id. For
+each operation: its median duration per call, calls per run, and whether it failed in the run.
+
+Model changes, added or removed operations, and new error types are listed under *Other changes*.
+They are descriptive and not tested.
+
+## Reading the report
+
+The tables show, for every metric:
+- the number of usable runs in each group (`n b/c`);
+- the baseline and current centre: the median, or the share of runs for proportions;
+- the change, absolute and relative;
+- the Holm-adjusted p-value;
+- a verdict.
+
+Each finding then spells out:
+
+- **baseline / current:** the median with its interquartile range (IQR, the middle 50 % of runs) and
+  `n`; for proportions, `k/n` with a 95 % Wilson interval.
+- **change:** the change in the median (for counts per run, in the mean), and the Hodges–Lehmann
+  *shift estimate*. That is the typical difference between a current run and a baseline run, with
+  its 95 % confidence interval. An interval that excludes 0 means the direction is clear.
+- **test:** which test was used, the raw p-value, the Holm-adjusted p-value, and how many tests share
+  the correction.
+- **evidence:** trace ids of the highest current runs and of outliers, plus how many runs were excluded
+  and why. Run `aobs-server analyze` on those files to look at individual runs.
+
+| Verdict | Meaning |
+|---|---|
+| `LIKELY REGRESSION` | Holm-adjusted p < alpha **and** the change exceeds the practical threshold, in the worse direction |
+| `POSSIBLE IMPROVEMENT` | The same, in the better direction |
+| `WEAK SIGNAL` | The change is large enough to matter, but the evidence is not conclusive; record more runs |
+| `MINOR CHANGE` | Statistically detectable, but smaller than the practical threshold |
+| `no change` | Neither |
+| `INSUFFICIENT DATA` | Fewer than `--min-runs` usable runs in a group: numbers are shown, no test is run, no interval is given |
+
+Statistical evidence and practical impact are separate questions. A `MINOR CHANGE` (say, +3 ms
+on 100 ms, consistently) is real but probably unimportant. A `WEAK SIGNAL` may be important but is
+not yet proven. A verdict says the groups differ; it does not say *why*.
+
+## Methods and assumptions
+
+Everything is implemented in the standard library (`server/src/aobs_server/diagnosis/stats.py`)
+and checked against brute-force enumeration and textbook values.
+
+- **Numbers** (durations, tokens, cost, counts per run): the Mann–Whitney U / Wilcoxon rank-sum test.
+  - Two-sided.
+  - The p-value is **exact** (the full permutation distribution, ties handled with mid-ranks) up to
+    60 runs in total; above that it uses the normal approximation with tie and continuity correction.
+  - Based on ranks, so one extreme run moves it very little, and it assumes no particular
+    distribution.
+  - The effect size is the **Hodges–Lehmann** shift with its distribution-free confidence interval.
+    The interval is exact for data without ties and approximate with ties.
+- **Proportions** (failed runs, runs with repeated calls, an operation failing): **Fisher's exact test**,
+  with **Wilson** 95 % intervals per group.
+- **Multiple metrics:** testing many metrics at once raises the chance that one looks significant by
+  luck. The **Holm–Bonferroni** correction controls the family-wise error rate.
+  - There are two families: run-level metrics, and per-operation metrics (exploratory).
+  - Constant metrics stay in the family. This is deliberately conservative.
+  - A test runs 40 comparisons of groups drawn from the *same* distribution and checks that
+    confident claims stay rare.
+- **Outliers:** values beyond Q1 − 3·IQR or Q3 + 3·IQR (Tukey's far-out fences) are listed under
+  *Data quality*. They are not removed; the rank test already limits their influence.
+- **Assumptions:** runs are independent, and recorded under comparable conditions (same task,
+  environment, inputs, load). A trend *within* a group (e.g. a warming cache) breaks independence.
+  Different environments, services or SDK versions between the groups produce a warning.
+
+## Minimum samples and insufficient data
+
+At least **5 usable runs per group** (`--min-runs`, which can't be set below 3) are needed for a
+test.
+
+| Group sizes | Smallest possible two-sided p (complete separation) |
+|---|---|
+| 3 vs 3 | 0.1: can never be significant at 0.05 |
+| 5 vs 5 | 0.008 |
+| 10 vs 10 | 0.00001 |
+
+After Holm, a 5-vs-5 result can still fall short. For example, 0.008 × 7 tests ≈ 0.056 is only a
+weak signal, and the tests check this case. Aim for 10 or more runs per group.
+
+The report says **insufficient data** instead of guessing when:
+- a group has fewer than `--min-runs` finished runs (`few_runs.jsonl`);
+- fewer than `--min-runs` runs report complete usage or cost (`partial_usage.jsonl`). The excluded
+  runs are counted, never treated as zero;
+- an operation is called in too few runs of one group.
+
+Cost is not compared at all when currencies differ or no run reports cost on every call. Prices
+are never estimated.
+
+## Limitations
+
+- **Statistical significance is not business impact.** Adjust the practical thresholds to what matters
+  for your agent.
+- **Dependent recordings fool the tests.** Runs recorded at the same moment against the same slow
+  dependency are not independent; the result can look more certain than it is.
+- **Operations are matched by name.** A renamed tool shows as one removed and one added operation;
+  same-named calls in different places are grouped.
+- **"Different task" detection checks only the run name and agent.** It cannot tell that the inputs
+  differed.
+- **Both directions are tested, but "worse" is assumed to mean "higher"** for every metric here (time,
+  failures, retries, calls, tokens, cost).
