@@ -207,3 +207,12 @@ def post_json(url: str, key: str, body: Any) -> tuple[int, dict[str, Any]]:
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read())
+
+
+def zulu(spans: dict[str, Any]) -> dict[str, Any]:
+    """Assembled spans with their times as the API writes them (RFC 3339, "Z")."""
+    out = {}
+    for span_id, span in spans.items():
+        times = {k: span[k].replace("+00:00", "Z") for k in ("start_time", "end_time") if span[k] is not None}
+        out[span_id] = span | times
+    return out

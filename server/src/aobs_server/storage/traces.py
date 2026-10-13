@@ -32,7 +32,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import TypeAdapter
-from sqlalchemy import Connection, delete, insert, select, tuple_, update
+from sqlalchemy import Connection, delete, func, insert, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..model.assembly import TraceView, assemble
@@ -520,7 +520,9 @@ def record_diagnostics(
         )
 
 
-def load_trace_events(conn: Connection, project_id: UUID, trace_id: str) -> list[AcceptedEvent]:
+def load_trace_events(
+    conn: Connection, project_id: UUID, trace_id: str, *, include_span_events: bool = True
+) -> list[AcceptedEvent]:
     """The stored (post-privacy) events of one trace in this project, content re-attached.
     Another project's trace with the same id is never returned."""
     out: list[AcceptedEvent] = []
@@ -545,6 +547,8 @@ def load_trace_events(conn: Connection, project_id: UUID, trace_id: str) -> list
             if row.content is not None:
                 body["content"] = row.content
             out.append(event_from_json(body, len(out)))
+    if not include_span_events:
+        return out
     for row in conn.execute(
         select(span_events.c.event)
         .where(span_events.c.project_id == project_id, span_events.c.trace_id == trace_id)
@@ -552,3 +556,53 @@ def load_trace_events(conn: Connection, project_id: UUID, trace_id: str) -> list
     ):
         out.append(event_from_json(row.event, len(out)))
     return out
+
+
+def trace_row(conn: Connection, project_id: UUID, trace_id: str) -> Any | None:
+    """The summary row of a trace in this project, or None (also for a deleted trace)."""
+    tombstoned = (
+        select(trace_tombstones.c.trace_id)
+        .where(trace_tombstones.c.project_id == project_id, trace_tombstones.c.trace_id == trace_id)
+        .exists()
+    )
+    return conn.execute(
+        select(traces).where(traces.c.project_id == project_id, traces.c.trace_id == trace_id, ~tombstoned)
+    ).first()
+
+
+def span_event_counts(conn: Connection, project_id: UUID, trace_id: str) -> tuple[dict[str, int], int]:
+    """(span events per span id, span events whose span is not stored) for one trace."""
+    counts = {
+        row.span_id: row.n
+        for row in conn.execute(
+            select(span_events.c.span_id, func.count().label("n"))
+            .where(span_events.c.project_id == project_id, span_events.c.trace_id == trace_id)
+            .group_by(span_events.c.span_id)
+        )
+    }
+    stored = set(
+        conn.execute(
+            select(spans.c.span_id).where(spans.c.project_id == project_id, spans.c.trace_id == trace_id)
+        ).scalars()
+    )
+    return {k: v for k, v in counts.items() if k in stored}, sum(v for k, v in counts.items() if k not in stored)
+
+
+def list_span_events(
+    conn: Connection,
+    project_id: UUID,
+    trace_id: str,
+    *,
+    span_id: str | None,
+    after: tuple[datetime, str] | None,
+    limit: int,
+) -> list[Any]:
+    """Span events of one trace in (time, event_id) order, keyset-paginated after ``after``."""
+    query = select(span_events.c.event_id, span_events.c.time, span_events.c.event).where(
+        span_events.c.project_id == project_id, span_events.c.trace_id == trace_id
+    )
+    if span_id is not None:
+        query = query.where(span_events.c.span_id == span_id)
+    if after is not None:
+        query = query.where(tuple_(span_events.c.time, span_events.c.event_id) > tuple_(*after))
+    return list(conn.execute(query.order_by(span_events.c.time, span_events.c.event_id).limit(limit)))

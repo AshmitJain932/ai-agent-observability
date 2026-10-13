@@ -132,6 +132,30 @@ which is acceptable under the 10,000-span cap; it may move to incremental update
 require it. A retry after a project's privacy settings changed is counted as a conflict rather
 than a duplicate.
 
+## ADR-016 — Trace reads: uniform 404, current policy on read, content opt-in · Accepted (2026-10-13)
+**Context.** Stored traces must be readable by project without revealing anything about other
+projects. Privacy settings can tighten after data was stored, and content is the most sensitive
+part of a trace.
+**Decision.**
+- **Endpoints.** `GET /v1/projects/{project_id}/traces/{trace_id}` and `…/events` need a
+  `read`-scoped key of that project (`auth.authorize`).
+- **One 404 for everything.** Another project (existing or not), a malformed id, an unknown trace
+  and a deleted trace all get the identical 404.
+- **Privacy on read.** Every read passes stored events through the project's *current* privacy
+  step (M4), so lowering the ceiling also hides older data. Content values and newer-minor fields
+  (`__extra__`) are returned only with `include_content=true`; status markers always.
+- **Consistent snapshots.** Each read runs in one `REPEATABLE READ`, read-only transaction, so
+  the summary and the spans agree.
+- **Pagination.** Spans are keyset-paginated by span id over the fully assembled trace (shared
+  assembly code). Span events are keyset-paginated by (time, event id) with an opaque cursor.
+
+**Consequence.**
+- No existence oracle across projects.
+- Tightening privacy is retroactive for reads, though not for already-stored rows, which a future
+  retention or rewrite job would handle.
+- Reading a page of a large trace costs one whole-trace assembly; an index-only span listing can
+  replace it if measurements require.
+
 ---
 
 ## Pending decisions

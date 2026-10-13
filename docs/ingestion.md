@@ -13,7 +13,7 @@ policy and stores the result in PostgreSQL, retry-safely.
 - the SDK's `HttpExporter` talking to it.
 
 **Not built yet:**
-- an HTTP API to *read* stored traces;
+- a run list or search over stored traces (one trace can be read by id: [traces-api.md](traces-api.md));
 - the dashboard over stored data;
 - rate limiting, trace deletion and the retention job.
 
@@ -222,7 +222,8 @@ retried batch is just the same events again.
   batch boundaries. A test feeds the same trace in several orders and compares the stored rows.
 - **Unfinished traces** are stored with status `open` and a `stale_reference_time`. At read time
   an open trace is `in_progress` while younger than the project's `stale_after_s` (default 15
-  min), then `incomplete`, as in the trace model. No read API applies this yet.
+  min), then `incomplete`, as in the trace model. The read API applies this
+  ([traces-api.md](traces-api.md)).
 - **Concurrent requests for the same trace are serialized.** Each batch locks the row of every
   trace it touches, in trace-id order, before writing, so two batches for one trace are applied one
   after the other. Two batches sharing several traces cannot deadlock. A batch that waits more than
@@ -296,9 +297,9 @@ uv run pytest server/tests/test_ingest_cli.py         # `aobs-server serve` star
 
 ## What is not supported yet
 
-- **Reading stored traces over HTTP.** There is no `GET /v1/projects/{id}/traces/{trace_id}` or
-  run list yet. Stored traces are read back in tests through `storage.traces.load_trace_events`.
-  The dashboard still reads JSONL files only.
+- **Listing and searching stored traces.** One trace can be read by id
+  ([traces-api.md](traces-api.md)), but there is no run list or search yet (Phase 4). The dashboard
+  still reads JSONL files only.
 - **Rate limiting:** no per-key limits, so the collector never answers 429.
 - **Trace deletion API and the retention job.** Tombstones are honoured, but nothing creates them
   yet, and nothing deletes data older than `retention_days`.

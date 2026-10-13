@@ -3,8 +3,8 @@
 > Working name. Status: **Phase 2 complete; Phase 3 in progress** — canonical event model, a
 > working Python SDK with an example agent, offline diagnosis and regression tools, a first
 > read-only dashboard over saved trace files, and an authenticated ingestion API that stores runs
-> in PostgreSQL. There is no API to read stored runs yet, and the dashboard does not show them
-> (Phase 3/4). Not production-hardened: no rate limiting, retention job or TLS of its own.
+> in PostgreSQL, with a read API for one stored trace by id. There is no run list yet, and the
+> dashboard does not show stored runs (Phase 4). Not production-hardened: no rate limiting, retention job or TLS of its own.
 
 Records what an AI agent did — model calls, tool calls, sub-agents, errors, latency, tokens and
 cost — as nested traces, regardless of framework or model provider.
@@ -24,7 +24,8 @@ cost — as nested traces, regardless of framework or model provider.
 | Web dashboard (`aobs-server dashboard`): overview, runs explorer, run details with diagnosis, two-run and group comparison, over sample data or local trace files | `server/src/aobs_server/dashboard/`, [docs/dashboard.md](docs/dashboard.md) | First version (reads files; no live ingestion yet) |
 | Repeated-run regression analysis (`aobs-server compare-groups`): medians, variation, exact rank / Fisher tests with Holm correction, honest "insufficient data" | `server/src/aobs_server/diagnosis/repeated.py`, `stats.py`, [examples/diagnose](examples/diagnose/README.md#demo-repeated-runs-with-statistics) | Demo (no server or database needed) |
 | Server foundations: PostgreSQL schema + migrations, API keys, authorization, ingest privacy step | `server/src/aobs_server/` | Done (Phase 3) |
-| Ingestion API (`aobs-server serve`, `POST /v1/ingest`): API-key auth, privacy before storage, retry-safe idempotent merge, per-trace locking, trace summaries | `server/src/aobs_server/api/`, `ingest/`, `storage/traces.py`, [docs/ingestion.md](docs/ingestion.md) | First version (Phase 3; no read API, rate limiting or retention job yet) |
+| Ingestion API (`aobs-server serve`, `POST /v1/ingest`): API-key auth, privacy before storage, retry-safe idempotent merge, per-trace locking, trace summaries | `server/src/aobs_server/api/`, `ingest/`, `storage/traces.py`, [docs/ingestion.md](docs/ingestion.md) | First version (Phase 3; no rate limiting or retention job yet) |
+| Trace read API (`GET /v1/projects/{id}/traces/{trace_id}`, `…/events`): read-scoped keys, uniform 404 across projects, content opt-in under the project's current privacy settings, pagination | `server/src/aobs_server/query/`, [docs/traces-api.md](docs/traces-api.md) | First version (Phase 3; no run list or search yet) |
 | Query API and dashboard over runs stored by the collector | — | Phase 4 |
 
 ## Try it
@@ -86,6 +87,7 @@ Python 3.11 run: `UV_PROJECT_ENVIRONMENT=.venv-311 uv run --python 3.11 pytest`.
 | Doc | Contents |
 |---|---|
 | [docs/ingestion.md](docs/ingestion.md) | Collector: PostgreSQL setup, API keys, `POST /v1/ingest` request/response, limits, duplicates, retries, errors |
+| [docs/traces-api.md](docs/traces-api.md) | Reading a stored trace and its span events: endpoints, pagination, tenant isolation, privacy |
 | [docs/dashboard.md](docs/dashboard.md) | Web dashboard: start, use, local files mode, security, limits |
 | [docs/sdk.md](docs/sdk.md) | SDK usage, configuration, privacy, delivery guarantees, integrations, limitations |
 | [docs/benchmarks.md](docs/benchmarks.md) | Overhead method and recorded baseline |

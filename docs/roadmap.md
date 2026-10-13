@@ -81,7 +81,7 @@ Changes from the plan: SDK floor raised to Python 3.11 (architecture §4); the `
 integration is tested against `openai` 3.29.0 only; no console exporter (JSONL file + in-memory
 cover offline use).
 
-## Phase 3 — Ingestion API & storage (in progress: ingestion done 2026-10-13)
+## Phase 3 — Ingestion API & storage (in progress: ingestion and trace reads done 2026-10-13)
 
 Build: FastAPI app; Alembic migrations for tables in architecture.md §6; API keys with scopes and
 optional environment binding (create via CLI); `POST /v1/ingest`; idempotent merge reusing
@@ -92,20 +92,19 @@ retention job on `received_at`; `GET /v1/projects/{id}/traces/{trace_id}`.
 
 Status: everything up to `POST /v1/ingest`, merge, summaries, tombstone checks, the span cap,
 size and event-count limits and problem+json errors is built ([ingestion.md](ingestion.md),
-ADR-015). Not built yet: rate limits, the trace deletion endpoint, the retention job and the
-`GET` trace endpoint.
+ADR-015), and so is `GET /v1/projects/{id}/traces/{trace_id}` with a span-event listing
+([traces-api.md](traces-api.md), ADR-016). Not built yet: rate limits, the trace deletion
+endpoint and the retention job.
 
 Acceptance:
 - [x] SDK example → server → stored; retrieved trace equals the SDK-side assembled trace
-      (`test_ingest_sdk_contract.py`; read back through the storage layer, as the HTTP read
-      endpoint does not exist yet).
+      (`test_ingest_sdk_contract.py`: SDK → HTTP ingest → HTTP `GET` of the trace).
 - [ ] Restarting the server and Postgres loses nothing that was acknowledged. (By design the
       transaction commits before the 200 is sent; no restart test exists yet.)
 - [x] Re-sending the same batch 5× leaves row counts unchanged; response reports duplicates
       (trace data rows; each batch adds one `ingest_diagnostics` row).
-- [ ] Key for project A gets 404 (not 403, to avoid existence leaks) on every read of project B.
-      (No read endpoints yet. Ingest isolation is tested: the project comes from the key only,
-      and the same trace id in two projects stays two traces.)
+- [x] Key for project A gets 404 (not 403, to avoid existence leaks) on every read of project B
+      (both read endpoints; also without the `read` scope; `test_traces_api.py`).
 - [x] Bodies > limit → 413; malformed JSON → 400; invalid event → listed in `rejected`, others stored.
 - [x] Content sent to a `metadata_only` project is not persisted (asserted at the DB level).
 - [x] Contract test: the SDK's `HttpExporter` against the real ingest API — retry/permanent/

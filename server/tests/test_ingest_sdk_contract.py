@@ -4,6 +4,7 @@ stored trace compared with what the SDK sent."""
 from __future__ import annotations
 
 import json
+import urllib.request
 from collections.abc import Iterator
 from typing import Any
 
@@ -17,7 +18,8 @@ from aobs_server.clock import FixedClock
 from aobs_server.config import Settings
 from aobs_server.model import assemble, merge_events, validate_batch
 from aobs_server.storage.traces import load_trace_events
-from ingest_support import NOW, Collector, LiveServer, batch, make_collector, sid, start, tid
+from ingest_support import NOW, Collector, LiveServer, batch, make_collector, sid, start, tid, zulu
+from tenants import make_key
 
 
 class Recording:
@@ -76,6 +78,20 @@ def test_sdk_run_is_stored_and_reads_back_as_the_sdk_assembled_it(live: tuple[Co
         row = conn.execute(text("SELECT status, span_count, error_count FROM traces")).one()
     assert assemble(merge_events(stored), NOW)[trace_id].to_dict() == view.to_dict()
     assert tuple(row) == ("ok_with_errors", 3, 1)
+
+    # and over HTTP, through GET /v1/projects/{id}/traces/{trace_id} with a read key
+    read_key = make_key(c.engine, c.project_id, scopes=("read",))[1]
+    request = urllib.request.Request(
+        f"{server.url}/v1/projects/{c.project_id}/traces/{trace_id}?include_content=true",
+        headers={"Authorization": f"Bearer {read_key}"},
+    )
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10) as response:
+        fetched = json.loads(response.read())
+    expected = view.to_dict()
+    assert {sp["span_id"]: {k: v for k, v in sp.items() if k != "event_count"} for sp in fetched["spans"]} == (
+        zulu(expected["spans"])
+    )
+    assert fetched["roots"] == expected["roots"] and fetched["summary"]["status"] == expected["status"]
 
 
 def test_exporter_outcomes_match_the_ingest_contract(live: tuple[Collector, LiveServer]) -> None:
