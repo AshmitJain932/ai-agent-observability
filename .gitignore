@@ -9,3 +9,6 @@ __pycache__/
 traces.jsonl
 my_run.jsonl
 my_samples/
+my_baseline.jsonl
+my_current.jsonl
+my_pairs/

@@ -207,6 +207,46 @@ def _analyze(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _compare(args: argparse.Namespace, settings: Settings) -> int:
+    import io
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from .diagnosis import CompareConfig, NoRunsError, SelectionError, build_comparisons, render_comparison_text
+    from .diagnosis.rules import SEVERITY_ORDER
+
+    paths = [Path(p) for p in [args.baseline, *args.current]]
+    for path in paths:
+        if not path.is_file():
+            raise CommandError(f"no such file: {path}")
+    if args.min_change_pct < 0 or args.min_run_ms < 0 or args.min_op_ms < 0:
+        raise ConfigError("--min-change-pct, --min-run-ms and --min-op-ms must not be negative")
+    try:
+        report = build_comparisons(
+            paths[0],
+            paths[1:],
+            datetime.now(UTC),
+            CompareConfig(min_change_pct=args.min_change_pct, min_run_ms=args.min_run_ms, min_op_ms=args.min_op_ms),
+            baseline_trace=args.baseline_trace,
+            current_trace=args.current_trace,
+            error_messages=not args.no_error_messages,
+        )
+    except NoRunsError as exc:
+        raise CommandError(str(exc)) from None
+    except SelectionError as exc:
+        raise ConfigError(str(exc)) from None
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="replace")
+    if args.json:
+        _print(report.to_dict())
+    else:
+        print(render_comparison_text(report))
+    worst = report.worst_severity()
+    if args.fail_on and worst and SEVERITY_ORDER[worst] <= SEVERITY_ORDER[args.fail_on]:
+        return 3
+    return 0
+
+
 # --------------------------------------------------------------------------- parser
 
 
@@ -278,6 +318,25 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--slow-min-ms", type=float, default=100.0, help="bottleneck minimum duration (default 100)")
     analyze.add_argument("--fail-on", choices=["error", "warning", "info"], help="exit 3 if a finding is this severe")
     analyze.set_defaults(handler=_analyze)
+
+    compare = commands.add_parser(
+        "compare",
+        help="compare a baseline run with later runs and report regressions; no database or server needed",
+        description="Compare the run in BASELINE with the run in each CURRENT file. Operations are matched by "
+        "kind and tool/span name, not span id. Exit codes: 0 report printed, 1 unreadable input or no runs, "
+        "2 invalid options or ambiguous run selection, 3 --fail-on threshold reached.",
+    )
+    compare.add_argument("baseline", metavar="BASELINE", help="trace file of the known-good (earlier) run")
+    compare.add_argument("current", nargs="+", metavar="CURRENT", help="trace file(s) of the run(s) to check")
+    compare.add_argument("--baseline-trace", metavar="ID", help="pick the baseline run by trace id prefix")
+    compare.add_argument("--current-trace", metavar="ID", help="pick the current run(s) by trace id prefix")
+    compare.add_argument("--json", action="store_true", help="machine-readable output")
+    compare.add_argument("--no-error-messages", action="store_true", help="omit error messages entirely")
+    compare.add_argument("--min-change-pct", type=float, default=20.0, help="smallest relative change (default 20)")
+    compare.add_argument("--min-run-ms", type=float, default=100.0, help="smallest run slowdown (default 100)")
+    compare.add_argument("--min-op-ms", type=float, default=50.0, help="smallest per-call slowdown (default 50)")
+    compare.add_argument("--fail-on", choices=["error", "warning", "info"], help="exit 3 if a finding is this severe")
+    compare.set_defaults(handler=_compare)
     return parser
 
 
