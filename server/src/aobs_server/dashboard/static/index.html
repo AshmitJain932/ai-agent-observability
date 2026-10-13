@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AOBS dashboard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">◆</span>
+      <span class="brand-name">AOBS</span>
+      <span class="brand-sub">Agent observability</span>
+    </div>
+    <label class="dataset-picker">
+      <span>Dataset</span>
+      <select id="dataset" aria-label="Dataset"></select>
+    </label>
+    <span id="source-badge" class="source-badge" hidden></span>
+  </header>
+  <nav class="tabs" aria-label="Sections">
+    <a href="#" data-tab="overview">Overview</a>
+    <a href="#" data-tab="runs">Runs</a>
+    <a href="#" data-tab="compare">Compare</a>
+  </nav>
+  <div id="source-note" class="source-note" hidden></div>
+  <main id="main" tabindex="-1" aria-live="polite">
+    <p class="state state-loading">Loading…</p>
+  </main>
+  <footer class="footer">
+    Content (prompts, responses, tool arguments and results) is never shown. Error messages are secret-scrubbed.
+    Diagnoses come from deterministic rules; no LLM is used.
+  </footer>
+  <noscript><p class="state state-error">This dashboard needs JavaScript.</p></noscript>
+</body>
+</html>

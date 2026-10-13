@@ -1,7 +1,9 @@
 # aobs — vendor-neutral observability for AI agents
 
-> Working name. Status: **Phase 2 complete** — canonical event model and a working Python SDK
-> with an example agent. No collector server, storage or UI yet (Phases 3–4).
+> Working name. Status: **Phase 2 complete; Phase 3 in progress** — canonical event model, a
+> working Python SDK with an example agent, offline diagnosis and regression tools, and a first
+> read-only dashboard over saved trace files. The collector cannot receive or store runs yet
+> (ingestion API and storage pipeline: Phase 3).
 
 Records what an AI agent did — model calls, tool calls, sub-agents, errors, latency, tokens and
 cost — as nested traces, regardless of framework or model provider.
@@ -18,10 +20,11 @@ cost — as nested traces, regardless of framework or model provider.
 | Overhead benchmark + recorded baseline | `sdk/python/benchmarks/`, [docs/benchmarks.md](docs/benchmarks.md) | Done |
 | Offline trace diagnosis (`aobs-server analyze`): deterministic rules, evidence, suggestions | `server/src/aobs_server/diagnosis/`, [examples/diagnose](examples/diagnose/README.md) | Demo (no server or database needed) |
 | Cross-run regression detection (`aobs-server compare`): new failures, slowdowns, retries, tool/model/token/cost changes | `server/src/aobs_server/diagnosis/compare.py`, [examples/diagnose](examples/diagnose/README.md#demo-compare-runs-and-find-regressions) | Demo (no server or database needed) |
+| Web dashboard (`aobs-server dashboard`): overview, runs explorer, run details with diagnosis, two-run and group comparison, over sample data or local trace files | `server/src/aobs_server/dashboard/`, [docs/dashboard.md](docs/dashboard.md) | First version (reads files; no live ingestion yet) |
 | Repeated-run regression analysis (`aobs-server compare-groups`): medians, variation, exact rank / Fisher tests with Holm correction, honest "insufficient data" | `server/src/aobs_server/diagnosis/repeated.py`, `stats.py`, [examples/diagnose](examples/diagnose/README.md#demo-repeated-runs-with-statistics) | Demo (no server or database needed) |
-| Server foundations: PostgreSQL schema + migrations, API keys, authorization, ingest privacy step | `server/src/aobs_server/` | Phase 3 in progress (not yet serving HTTP) |
+| Server foundations: PostgreSQL schema + migrations, API keys, authorization, ingest privacy step | `server/src/aobs_server/` | Phase 3 in progress (no ingestion API yet) |
 | Ingestion API, storage, auth | — | Phase 3 |
-| Query API, dashboard | — | Phase 4 |
+| Query API and dashboard over runs stored by the collector | — | Phase 4 |
 
 ## Try it
 
@@ -32,7 +35,11 @@ uv sync
 uv run python examples/support_agent/run.py --scenario refund-outage    # no API key needed
 ```
 
-Prints the agent's answer, then the trace the collector will reconstruct (validated with the
+**Dashboard:** `uv run aobs-server dashboard`, then open <http://localhost:8800/> (in a Codespace:
+Ports tab → port 8800 → *Open in Browser*). It starts with clearly labelled sample data; see
+[docs/dashboard.md](docs/dashboard.md).
+
+The example command above prints the agent's answer, then the trace the collector will reconstruct (validated with the
 Phase 1 model library). See [examples/support_agent/README.md](examples/support_agent/README.md).
 
 Diagnose a recorded run (errors, repeated failures, wasted calls, bottlenecks, with evidence and
@@ -74,6 +81,7 @@ Python 3.11 run: `UV_PROJECT_ENVIRONMENT=.venv-311 uv run --python 3.11 pytest`.
 
 | Doc | Contents |
 |---|---|
+| [docs/dashboard.md](docs/dashboard.md) | Web dashboard: start, use, local files mode, security, limits |
 | [docs/sdk.md](docs/sdk.md) | SDK usage, configuration, privacy, delivery guarantees, integrations, limitations |
 | [docs/benchmarks.md](docs/benchmarks.md) | Overhead method and recorded baseline |
 | [docs/architecture.md](docs/architecture.md) | System shape, stack, ingestion pipeline, storage, privacy, risks, differentiator readiness |

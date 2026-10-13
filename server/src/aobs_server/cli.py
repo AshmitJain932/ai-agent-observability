@@ -291,6 +291,46 @@ def _compare_groups(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _dashboard(args: argparse.Namespace, settings: Settings) -> int:
+    import ipaddress
+    import os
+    import secrets
+    from pathlib import Path
+
+    import uvicorn
+
+    from .dashboard import DashboardConfig, create_app
+    from .dashboard.datasets import REPO_EXAMPLES
+
+    samples = None if args.no_samples else Path(args.samples_dir) if args.samples_dir else REPO_EXAMPLES
+    data_dir = Path(args.data_dir).resolve() if args.data_dir else None
+    if data_dir is not None and not data_dir.is_dir():
+        raise CommandError(f"--data-dir {data_dir} is not a directory")
+    if samples is None and data_dir is None:
+        raise ConfigError("nothing to show: use --data-dir, or drop --no-samples")
+    if not 1 <= args.port <= 65535:
+        raise ConfigError("--port must be between 1 and 65535")
+    token = (os.environ.get("AOBS_DASHBOARD_TOKEN") or secrets.token_urlsafe(24)) if data_dir else None
+    app = create_app(DashboardConfig(samples_dir=samples, data_dir=data_dir, token=token))
+    url = f"http://{'localhost' if args.host in ('127.0.0.1', '::1', 'localhost') else args.host}:{args.port}/"
+    print(f"aobs dashboard on {url}", flush=True)
+    if samples is not None and not samples.is_dir():
+        print(f"  note: sample data not found at {samples}; only --data-dir will be shown", flush=True)
+    if data_dir is not None:
+        print(f"  local trace files: {data_dir}", flush=True)
+        print(f"  open {url}#token={token}", flush=True)
+        print("  (or paste the token into the dashboard when it asks; it is required for local files)", flush=True)
+    try:
+        loopback = ipaddress.ip_address(args.host).is_loopback
+    except ValueError:
+        loopback = args.host == "localhost"
+    if not loopback:
+        print(f"  warning: listening on {args.host}, reachable from other machines on this network", flush=True)
+    print("  press Ctrl+C to stop", flush=True)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
 # --------------------------------------------------------------------------- parser
 
 
@@ -403,6 +443,21 @@ def build_parser() -> argparse.ArgumentParser:
     groups.add_argument("--min-op-ms", type=float, default=20.0, help="practical per-call slowdown in ms (default 20)")
     groups.add_argument("--fail-on", choices=["error", "warning", "info"], help="exit 3 if a finding is this severe")
     groups.set_defaults(handler=_compare_groups)
+
+    dash = commands.add_parser(
+        "dashboard",
+        help="start the web dashboard (sample data and/or a directory of trace files; no database needed)",
+        description="Serve the read-only dashboard. Sample recordings from examples/diagnose are shown by default; "
+        "--data-dir adds your own JSONL trace files, protected by a token printed at start-up.",
+    )
+    dash.add_argument("--host", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
+    dash.add_argument("--port", type=int, default=8800, help="port (default 8800)")
+    dash.add_argument("--data-dir", metavar="DIR", help="directory of JSONL trace files to show (needs the token)")
+    dash.add_argument(
+        "--samples-dir", metavar="DIR", help="where the sample recordings live (default examples/diagnose)"
+    )
+    dash.add_argument("--no-samples", action="store_true", help="do not show the sample datasets")
+    dash.set_defaults(handler=_dashboard)
     return parser
 
 

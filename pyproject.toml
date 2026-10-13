@@ -12,6 +12,7 @@ dev = [
   "mypy>=1.11",
   "openai>=3.29,<4",  # tests of the openai_compat integration (SDK itself does not depend on it)
   "httpx>=0.28",  # FastAPI TestClient in server tests
+  "playwright>=1.55,<2",  # dashboard browser tests (uses the Chromium installed by `playwright install chromium`)
 ]
 
 [tool.pytest.ini_options]
