@@ -23,6 +23,7 @@ cost — as nested traces, regardless of framework or model provider.
 | Cross-run regression detection (`aobs-server compare`): new failures, slowdowns, retries, tool/model/token/cost changes | `server/src/aobs_server/diagnosis/compare.py`, [examples/diagnose](examples/diagnose/README.md#demo-compare-runs-and-find-regressions) | Demo (no server or database needed) |
 | Web dashboard (`aobs-server dashboard`): overview, runs explorer, run details with diagnosis, two-run and group comparison, over sample data or local trace files | `server/src/aobs_server/dashboard/`, [docs/dashboard.md](docs/dashboard.md) | First version (reads files; no live ingestion yet) |
 | Repeated-run regression analysis (`aobs-server compare-groups`): medians, variation, exact rank / Fisher tests with Holm correction, honest "insufficient data" | `server/src/aobs_server/diagnosis/repeated.py`, `stats.py`, [examples/diagnose](examples/diagnose/README.md#demo-repeated-runs-with-statistics) | Demo (no server or database needed) |
+| Reliability gate (`aobs-server gate`): requirements in a TOML policy (outcome, completeness, duration, calls, retries, tokens, cost, tools, pass rate, baseline limits) → PASS/FAIL with evidence, exit code 3 on FAIL | `server/src/aobs_server/diagnosis/gate.py`, [docs/reliability-gate.md](docs/reliability-gate.md) | First version (no server or database needed) |
 | Server foundations: PostgreSQL schema + migrations, API keys, authorization, ingest privacy step | `server/src/aobs_server/` | Done (Phase 3) |
 | Ingestion API (`aobs-server serve`, `POST /v1/ingest`): API-key auth, privacy before storage, retry-safe idempotent merge, per-trace locking, trace summaries | `server/src/aobs_server/api/`, `ingest/`, `storage/traces.py`, [docs/ingestion.md](docs/ingestion.md) | First version (Phase 3; no rate limiting or retention job yet) |
 | Trace read API (`GET /v1/projects/{id}/traces/{trace_id}`, `…/events`): read-scoped keys, uniform 404 across projects, content opt-in under the project's current privacy settings, pagination | `server/src/aobs_server/query/`, [docs/traces-api.md](docs/traces-api.md) | First version (Phase 3; no run list or search yet) |
@@ -68,6 +69,15 @@ uv run aobs-server compare-groups --baseline examples/diagnose/groups/baseline.j
 
 See [examples/diagnose/README.md](examples/diagnose/README.md).
 
+Check recorded runs against written requirements, e.g. in CI (exit code 3 on FAIL, every failure
+explained with the spans that show it):
+
+```bash
+uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml examples/diagnose/compare/refund_outage.jsonl
+```
+
+See [docs/reliability-gate.md](docs/reliability-gate.md).
+
 ## Development
 
 ```bash
@@ -89,6 +99,7 @@ Python 3.11 run: `UV_PROJECT_ENVIRONMENT=.venv-311 uv run --python 3.11 pytest`.
 | [docs/ingestion.md](docs/ingestion.md) | Collector: PostgreSQL setup, API keys, `POST /v1/ingest` request/response, limits, duplicates, retries, errors |
 | [docs/traces-api.md](docs/traces-api.md) | Reading a stored trace and its span events: endpoints, pagination, tenant isolation, privacy |
 | [docs/dashboard.md](docs/dashboard.md) | Web dashboard: start, use, local files mode, security, limits |
+| [docs/reliability-gate.md](docs/reliability-gate.md) | Reliability gate: policy file, checks, missing-data rules, exit codes, CI use, limits |
 | [docs/sdk.md](docs/sdk.md) | SDK usage, configuration, privacy, delivery guarantees, integrations, limitations |
 | [docs/benchmarks.md](docs/benchmarks.md) | Overhead method and recorded baseline |
 | [docs/architecture.md](docs/architecture.md) | System shape, stack, ingestion pipeline, storage, privacy, risks, differentiator readiness |

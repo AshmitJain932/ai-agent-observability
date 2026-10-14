@@ -1,0 +1,23 @@
+# Requirements for the inventory "restock_check" task, judged against a known-good baseline run.
+#   uv run aobs-server gate --policy examples/diagnose/gate/restock_baseline.toml \
+#       --baseline examples/diagnose/compare/inventory_v1.jsonl examples/diagnose/compare/inventory_v2.jsonl
+# See docs/reliability-gate.md for every setting.
+version = 1
+
+[gate]
+task = "restock_check"
+
+[run]
+require_success = true
+require_complete = true
+max_retries = 1
+max_cost = "0.002"
+cost_currency = "USD"
+
+[baseline]
+forbid_outcome_regression = true
+forbid_new_error_types = true
+forbid_removed_tools = true
+max_duration_increase_pct = 100
+max_tool_call_increase = 1
+max_input_token_increase_pct = 50

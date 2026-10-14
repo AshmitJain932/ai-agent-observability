@@ -291,6 +291,61 @@ def _compare_groups(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _gate(args: argparse.Namespace, settings: Settings) -> int:
+    import io
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from .diagnosis import InputProblem, NoRunsError, SelectionError
+    from .diagnosis.compare import RunProfile
+    from .diagnosis.gate import PolicyError, build_gate_report, load_baseline, load_policy, render_gate_text
+
+    try:
+        policy = load_policy(Path(args.policy))
+    except PolicyError as exc:
+        raise ConfigError(str(exc)) from None
+    if (policy.baseline is None) != (args.baseline is None):
+        raise ConfigError(
+            "the policy has a [baseline] section: pass the baseline run with --baseline FILE"
+            if args.baseline is None
+            else "--baseline was given but the policy has no [baseline] section"
+        )
+    if args.baseline_trace and args.baseline is None:
+        raise ConfigError("--baseline-trace needs --baseline")
+    paths = [Path(p) for p in args.paths]
+    for path in [*paths, *([Path(args.baseline)] if args.baseline else [])]:
+        if not path.is_file():
+            raise CommandError(f"no such file: {path}")
+    now = datetime.now(UTC)
+    baseline: RunProfile | None = None
+    baseline_problems: list[InputProblem] = []
+    if args.baseline:
+        try:
+            baseline, baseline_problems = load_baseline(
+                Path(args.baseline), now, args.baseline_trace, error_messages=not args.no_error_messages
+            )
+        except NoRunsError as exc:
+            raise CommandError(str(exc)) from None
+        except SelectionError as exc:
+            raise ConfigError(str(exc)) from None
+    report = build_gate_report(
+        policy,
+        paths,
+        now,
+        policy_path=args.policy,
+        baseline=baseline,
+        baseline_problems=baseline_problems,
+        error_messages=not args.no_error_messages,
+    )
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="replace")
+    if args.json:
+        _print(report.to_dict())
+    else:
+        print(render_gate_text(report))
+    return 0 if report.verdict == "pass" else 3
+
+
 def _serve(args: argparse.Namespace, settings: Settings) -> int:
     import logging
 
@@ -482,6 +537,22 @@ def build_parser() -> argparse.ArgumentParser:
     groups.add_argument("--min-op-ms", type=float, default=20.0, help="practical per-call slowdown in ms (default 20)")
     groups.add_argument("--fail-on", choices=["error", "warning", "info"], help="exit 3 if a finding is this severe")
     groups.set_defaults(handler=_compare_groups)
+
+    gate = commands.add_parser(
+        "gate",
+        help="check saved runs against the requirements in a policy file: PASS or FAIL (for CI)",
+        description="Check every run in the trace files against the requirements in POLICY (TOML; see "
+        "docs/reliability-gate.md). Each check is PASS, FAIL or UNKNOWN (the trace lacks the data) with evidence. "
+        "Exit codes: 0 PASS, 1 missing file or no runs in the baseline file, 2 invalid policy or options, "
+        "3 FAIL.",
+    )
+    gate.add_argument("paths", nargs="+", metavar="FILE", help="trace files (SDK JSONL or JSON batches)")
+    gate.add_argument("--policy", required=True, metavar="POLICY", help="requirements file (TOML)")
+    gate.add_argument("--baseline", metavar="FILE", help="known-good run for the policy's [baseline] requirements")
+    gate.add_argument("--baseline-trace", metavar="ID", help="pick the baseline run by trace id prefix")
+    gate.add_argument("--json", action="store_true", help="machine-readable output")
+    gate.add_argument("--no-error-messages", action="store_true", help="omit error messages entirely")
+    gate.set_defaults(handler=_gate)
 
     serve = commands.add_parser(
         "serve",
