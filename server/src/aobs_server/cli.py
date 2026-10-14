@@ -10,14 +10,17 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from importlib.metadata import version
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import Connection
 
 from .config import ConfigError, Settings
+
+if TYPE_CHECKING:
+    from .diagnosis.loader import Source
 
 
 class CommandError(Exception):
@@ -25,6 +28,7 @@ class CommandError(Exception):
 
 
 Handler = Callable[[argparse.Namespace, Settings], int]
+STORED_HELP = "project whose stored traces the db: inputs select (needs AOBS_DATABASE_URL)"
 
 
 def _print(data: Any) -> None:
@@ -172,27 +176,97 @@ def _key_revoke(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _inputs(
+    args: argparse.Namespace, settings: Settings, stack: ExitStack, *groups: Sequence[str]
+) -> list[list[Source]]:
+    """Resolve FILE arguments: a path, or a ``db:`` selection of ``--project``'s stored traces
+    (``aobs_server.diagnosis.stored``). Missing files and unknown trace ids are exit code 1, like a
+    missing file; malformed selections are usage errors. The database layer is only imported when
+    a ``db:`` input is given."""
+    from pathlib import Path
+
+    def is_selection(value: str) -> bool:
+        return value.startswith("db:")  # diagnosis.stored.PREFIX, without importing the database layer
+
+    values = [v for group in groups for v in group]
+    project = getattr(args, "project", None)
+    if not any(is_selection(v) for v in values):
+        if project is not None:
+            raise ConfigError("--project is only used with db: inputs (e.g. db:trace=<id> or db:task=<name>)")
+        for value in values:
+            if not Path(value).is_file():
+                raise CommandError(f"no such file: {value}")
+        return [[Path(v) for v in group] for group in groups]
+    if project is None:
+        raise ConfigError("db: inputs need --project PROJECT_ID (and AOBS_DATABASE_URL)")
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from .diagnosis.stored import SelectionSyntaxError, StoreUnavailable, check_store, open_selection, select_rows
+    from .storage.db import make_engine
+
+    project_id = _uuid(project, "project")
+    engine = make_engine(settings.require_database_url(), pool_size=1)
+    stack.callback(engine.dispose)
+    try:
+        check_store(engine, project_id)
+    except StoreUnavailable as exc:
+        raise CommandError(str(exc)) from None
+    resolved: list[list[Source]] = []
+    for group in groups:
+        sources: list[Source] = []
+        for value in group:
+            if not is_selection(value):
+                if not Path(value).is_file():
+                    raise CommandError(f"no such file: {value}")
+                sources.append(Path(value))
+                continue
+            try:
+                selection = open_selection(engine, project_id, value)
+            except SelectionSyntaxError as exc:
+                raise ConfigError(f"{value}: {exc}") from None
+            if selection.selection.trace_ids:
+                try:
+                    with engine.connect() as conn:
+                        found = {row.trace_id for row in select_rows(conn, project_id, selection.selection)}
+                except SQLAlchemyError as exc:
+                    raise CommandError(f"cannot read the database ({type(exc).__name__})") from None
+                for trace_id in selection.selection.trace_ids:
+                    if trace_id not in found:
+                        raise CommandError(f"no stored trace {trace_id} in project {project_id}")
+            sources.append(selection)
+        resolved.append(sources)
+    return resolved
+
+
+@contextmanager
+def _reading_inputs() -> Any:
+    """Database failures while an analysis reads stored traces are exit code 1, not a traceback."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        yield
+    except SQLAlchemyError as exc:
+        raise CommandError(f"cannot read the database ({type(exc).__name__}); check AOBS_DATABASE_URL") from None
+
+
 def _analyze(args: argparse.Namespace, settings: Settings) -> int:
     import io
     from datetime import UTC, datetime
-    from pathlib import Path
 
     from .diagnosis import RuleConfig, build_report, render_text
     from .diagnosis.rules import SEVERITY_ORDER
 
-    paths = [Path(p) for p in args.paths]
-    for path in paths:
-        if not path.is_file():
-            raise CommandError(f"no such file: {path}")
     if not 0 < args.slow_share <= 1:
         raise ConfigError("--slow-share must be in (0, 1]")
-    report = build_report(
-        paths,
-        datetime.now(UTC),
-        RuleConfig(slow_share=args.slow_share, slow_min_ms=args.slow_min_ms),
-        error_messages=not args.no_error_messages,
-        trace_id=args.trace,
-    )
+    with ExitStack() as stack, _reading_inputs():
+        (paths,) = _inputs(args, settings, stack, args.paths)
+        report = build_report(
+            paths,
+            datetime.now(UTC),
+            RuleConfig(slow_share=args.slow_share, slow_min_ms=args.slow_min_ms),
+            error_messages=not args.no_error_messages,
+            trace_id=args.trace,
+        )
     if isinstance(sys.stdout, io.TextIOWrapper):  # e.g. a Windows console that cannot print every character
         sys.stdout.reconfigure(errors="replace")
     if args.json:
@@ -210,27 +284,24 @@ def _analyze(args: argparse.Namespace, settings: Settings) -> int:
 def _compare(args: argparse.Namespace, settings: Settings) -> int:
     import io
     from datetime import UTC, datetime
-    from pathlib import Path
 
     from .diagnosis import CompareConfig, NoRunsError, SelectionError, build_comparisons, render_comparison_text
     from .diagnosis.rules import SEVERITY_ORDER
 
-    paths = [Path(p) for p in [args.baseline, *args.current]]
-    for path in paths:
-        if not path.is_file():
-            raise CommandError(f"no such file: {path}")
     if args.min_change_pct < 0 or args.min_run_ms < 0 or args.min_op_ms < 0:
         raise ConfigError("--min-change-pct, --min-run-ms and --min-op-ms must not be negative")
     try:
-        report = build_comparisons(
-            paths[0],
-            paths[1:],
-            datetime.now(UTC),
-            CompareConfig(min_change_pct=args.min_change_pct, min_run_ms=args.min_run_ms, min_op_ms=args.min_op_ms),
-            baseline_trace=args.baseline_trace,
-            current_trace=args.current_trace,
-            error_messages=not args.no_error_messages,
-        )
+        with ExitStack() as stack, _reading_inputs():
+            (paths,) = _inputs(args, settings, stack, [args.baseline, *args.current])
+            report = build_comparisons(
+                paths[0],
+                paths[1:],
+                datetime.now(UTC),
+                CompareConfig(min_change_pct=args.min_change_pct, min_run_ms=args.min_run_ms, min_op_ms=args.min_op_ms),
+                baseline_trace=args.baseline_trace,
+                current_trace=args.current_trace,
+                error_messages=not args.no_error_messages,
+            )
     except NoRunsError as exc:
         raise CommandError(str(exc)) from None
     except SelectionError as exc:
@@ -250,16 +321,10 @@ def _compare(args: argparse.Namespace, settings: Settings) -> int:
 def _compare_groups(args: argparse.Namespace, settings: Settings) -> int:
     import io
     from datetime import UTC, datetime
-    from pathlib import Path
 
     from .diagnosis import GroupConfig, NoRunsError, build_group_report, render_group_text
     from .diagnosis.rules import SEVERITY_ORDER
 
-    baseline = [Path(p) for p in args.baseline]
-    current = [Path(p) for p in args.current]
-    for path in [*baseline, *current]:
-        if not path.is_file():
-            raise CommandError(f"no such file: {path}")
     if args.min_runs < 3:
         raise ConfigError("--min-runs must be at least 3 (fewer can never give a conclusive rank test)")
     if not 0 < args.alpha < 1:
@@ -274,9 +339,11 @@ def _compare_groups(args: argparse.Namespace, settings: Settings) -> int:
         min_op_ms=args.min_op_ms,
     )
     try:
-        report = build_group_report(
-            baseline, current, datetime.now(UTC), config, task=args.task, error_messages=not args.no_error_messages
-        )
+        with ExitStack() as stack, _reading_inputs():
+            baseline, current = _inputs(args, settings, stack, args.baseline, args.current)
+            report = build_group_report(
+                baseline, current, datetime.now(UTC), config, task=args.task, error_messages=not args.no_error_messages
+            )
     except NoRunsError as exc:
         raise CommandError(str(exc)) from None
     if isinstance(sys.stdout, io.TextIOWrapper):
@@ -312,31 +379,29 @@ def _gate(args: argparse.Namespace, settings: Settings) -> int:
         )
     if args.baseline_trace and args.baseline is None:
         raise ConfigError("--baseline-trace needs --baseline")
-    paths = [Path(p) for p in args.paths]
-    for path in [*paths, *([Path(args.baseline)] if args.baseline else [])]:
-        if not path.is_file():
-            raise CommandError(f"no such file: {path}")
     now = datetime.now(UTC)
     baseline: RunProfile | None = None
     baseline_problems: list[InputProblem] = []
-    if args.baseline:
-        try:
-            baseline, baseline_problems = load_baseline(
-                Path(args.baseline), now, args.baseline_trace, error_messages=not args.no_error_messages
-            )
-        except NoRunsError as exc:
-            raise CommandError(str(exc)) from None
-        except SelectionError as exc:
-            raise ConfigError(str(exc)) from None
-    report = build_gate_report(
-        policy,
-        paths,
-        now,
-        policy_path=args.policy,
-        baseline=baseline,
-        baseline_problems=baseline_problems,
-        error_messages=not args.no_error_messages,
-    )
+    with ExitStack() as stack, _reading_inputs():
+        paths, baseline_input = _inputs(args, settings, stack, args.paths, [args.baseline] if args.baseline else [])
+        if baseline_input:
+            try:
+                baseline, baseline_problems = load_baseline(
+                    baseline_input[0], now, args.baseline_trace, error_messages=not args.no_error_messages
+                )
+            except NoRunsError as exc:
+                raise CommandError(str(exc)) from None
+            except SelectionError as exc:
+                raise ConfigError(str(exc)) from None
+        report = build_gate_report(
+            policy,
+            paths,
+            now,
+            policy_path=args.policy,
+            baseline=baseline,
+            baseline_problems=baseline_problems,
+            error_messages=not args.no_error_messages,
+        )
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(errors="replace")
     if args.json:
@@ -344,6 +409,58 @@ def _gate(args: argparse.Namespace, settings: Settings) -> int:
     else:
         print(render_gate_text(report))
     return 0 if report.verdict == "pass" else 3
+
+
+def _traces_list(args: argparse.Namespace, settings: Settings) -> int:
+    from datetime import UTC, datetime
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from .diagnosis.stored import SelectionSyntaxError, StoreUnavailable, check_store, parse_selection, select_rows
+    from .query.traces import summary
+    from .storage import tenancy
+    from .storage.db import make_engine
+
+    project_id = _uuid(args.project, "project")
+    try:
+        selection = parse_selection(args.selection if args.selection else f"db:limit={args.limit}")
+    except SelectionSyntaxError as exc:
+        raise ConfigError(str(exc) if args.selection else "--limit must be a whole number from 1 to 1000") from None
+    engine = make_engine(settings.require_database_url(), pool_size=1)
+    try:
+        check_store(engine, project_id)
+        with engine.connect() as conn:
+            project_settings = tenancy.project_settings(conn, project_id)
+            if project_settings is None:  # pragma: no cover - deleted after check_store
+                raise StoreUnavailable(f"project {project_id} does not exist")
+            rows = select_rows(conn, project_id, selection)
+    except StoreUnavailable as exc:
+        raise CommandError(str(exc)) from None
+    except SQLAlchemyError as exc:
+        raise CommandError(f"cannot read the database ({type(exc).__name__}); check AOBS_DATABASE_URL") from None
+    finally:
+        engine.dispose()
+    now = datetime.now(UTC)
+    listed = [
+        {"trace_id": row.trace_id, "input": f"db:trace={row.trace_id}", **summary(row, project_settings, now)}
+        for row in rows
+    ]
+    if args.json:
+        _print({"project_id": project_id, "traces": listed})
+        return 0
+    if not listed:
+        print("no stored traces match")
+        return 0
+    print(f"{'TRACE ID':32}  {'STARTED (UTC)':20}  {'STATUS':14}  {'SPANS':>5}  {'ERRORS':>6}  RUN / AGENT")
+    for item in listed:
+        started = (item["started_at"] or "-")[:19].replace("T", " ")
+        who = " / ".join(x for x in (item["root_name"], item["agent_name"]) if x) or "-"
+        print(
+            f"{item['trace_id']}  {started:20}  {item['status']:14}  {item['span_count']:>5}  "
+            f"{item['error_count']:>6}  {who}"
+        )
+    print(f"{len(listed)} trace(s); analyze one with: aobs-server analyze --project {project_id} db:trace=<TRACE ID>")
+    return 0
 
 
 def _serve(args: argparse.Namespace, settings: Settings) -> int:
@@ -400,20 +517,41 @@ def _dashboard(args: argparse.Namespace, settings: Settings) -> int:
     data_dir = Path(args.data_dir).resolve() if args.data_dir else None
     if data_dir is not None and not data_dir.is_dir():
         raise CommandError(f"--data-dir {data_dir} is not a directory")
-    if samples is None and data_dir is None:
-        raise ConfigError("nothing to show: use --data-dir, or drop --no-samples")
+    project_id = _uuid(args.project, "project") if args.project else None
+    if samples is None and data_dir is None and project_id is None:
+        raise ConfigError("nothing to show: use --data-dir or --project, or drop --no-samples")
     if not 1 <= args.port <= 65535:
         raise ConfigError("--port must be between 1 and 65535")
-    token = (os.environ.get("AOBS_DASHBOARD_TOKEN") or secrets.token_urlsafe(24)) if data_dir else None
-    app = create_app(DashboardConfig(samples_dir=samples, data_dir=data_dir, token=token))
+    protected = data_dir is not None or project_id is not None
+    token = (os.environ.get("AOBS_DASHBOARD_TOKEN") or secrets.token_urlsafe(24)) if protected else None
+    engine = None
+    if project_id is not None:
+        from .diagnosis.stored import StoreUnavailable, check_store
+        from .storage.db import make_engine
+
+        engine = make_engine(settings.require_database_url(), pool_size=2)
+        try:
+            check_store(engine, project_id)
+        except StoreUnavailable as exc:
+            engine.dispose()
+            raise CommandError(str(exc)) from None
+    app = create_app(
+        DashboardConfig(samples_dir=samples, data_dir=data_dir, token=token, project_id=project_id, engine=engine)
+    )
     url = f"http://{'localhost' if args.host in ('127.0.0.1', '::1', 'localhost') else args.host}:{args.port}/"
     print(f"aobs dashboard on {url}", flush=True)
     if samples is not None and not samples.is_dir():
         print(f"  note: sample data not found at {samples}; only --data-dir will be shown", flush=True)
     if data_dir is not None:
         print(f"  local trace files: {data_dir}", flush=True)
+    if project_id is not None:
+        print(f"  stored traces of project {project_id} (PostgreSQL, AOBS_DATABASE_URL)", flush=True)
+    if protected:
         print(f"  open {url}#token={token}", flush=True)
-        print("  (or paste the token into the dashboard when it asks; it is required for local files)", flush=True)
+        print(
+            "  (or paste the token into the dashboard when it asks; it is required for local files and stored traces)",
+            flush=True,
+        )
     try:
         loopback = ipaddress.ip_address(args.host).is_loopback
     except ValueError:
@@ -421,7 +559,11 @@ def _dashboard(args: argparse.Namespace, settings: Settings) -> int:
     if not loopback:
         print(f"  warning: listening on {args.host}, reachable from other machines on this network", flush=True)
     print("  press Ctrl+C to stop", flush=True)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    finally:
+        if engine is not None:
+            engine.dispose()
     return 0
 
 
@@ -484,11 +626,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze = commands.add_parser(
         "analyze",
-        help="diagnose saved traces (SDK JSONL files); no database or server needed",
-        description="Diagnose saved traces with deterministic rules. Content is never shown; error messages "
-        "are secret-scrubbed. Exit codes: 0 report printed, 1 no traces found, 3 --fail-on threshold reached.",
+        help="diagnose saved traces (SDK JSONL files, or traces stored in PostgreSQL)",
+        description="Diagnose saved traces with deterministic rules. An INPUT is a trace file, or db:KEY=VALUE&... "
+        "selecting --project's stored traces (see docs/stored-analysis.md). Content is never shown; error messages "
+        "are secret-scrubbed. Exit codes: 0 report printed, 1 no traces found, missing input or database "
+        "unavailable, 2 invalid options, 3 --fail-on threshold reached.",
     )
-    analyze.add_argument("paths", nargs="+", metavar="FILE", help="JSONL from JsonlFileExporter, or a JSON batch")
+    analyze.add_argument(
+        "paths", nargs="+", metavar="INPUT", help="JSONL from JsonlFileExporter, a JSON batch, or a db: selection"
+    )
+    analyze.add_argument("--project", metavar="PROJECT_ID", help=STORED_HELP)
     analyze.add_argument("--json", action="store_true", help="machine-readable output")
     analyze.add_argument("--trace", metavar="ID", help="only the trace whose id starts with ID")
     analyze.add_argument("--no-error-messages", action="store_true", help="omit error messages entirely")
@@ -499,13 +646,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     compare = commands.add_parser(
         "compare",
-        help="compare a baseline run with later runs and report regressions; no database or server needed",
-        description="Compare the run in BASELINE with the run in each CURRENT file. Operations are matched by "
+        help="compare a baseline run with later runs and report regressions (files or stored traces)",
+        description="Compare the run in BASELINE with the run in each CURRENT input (a trace file, or a db: "
+        "selection of --project's stored traces). Operations are matched by "
         "kind and tool/span name, not span id. Exit codes: 0 report printed, 1 unreadable input or no runs, "
         "2 invalid options or ambiguous run selection, 3 --fail-on threshold reached.",
     )
-    compare.add_argument("baseline", metavar="BASELINE", help="trace file of the known-good (earlier) run")
-    compare.add_argument("current", nargs="+", metavar="CURRENT", help="trace file(s) of the run(s) to check")
+    compare.add_argument("baseline", metavar="BASELINE", help="trace file or db: selection of the known-good run")
+    compare.add_argument("current", nargs="+", metavar="CURRENT", help="trace file(s) or db: selection(s) to check")
+    compare.add_argument("--project", metavar="PROJECT_ID", help=STORED_HELP)
     compare.add_argument("--baseline-trace", metavar="ID", help="pick the baseline run by trace id prefix")
     compare.add_argument("--current-trace", metavar="ID", help="pick the current run(s) by trace id prefix")
     compare.add_argument("--json", action="store_true", help="machine-readable output")
@@ -525,8 +674,13 @@ def build_parser() -> argparse.ArgumentParser:
         "2 invalid options, 3 --fail-on reached (error: a likely regression; warning: also a weak signal of a "
         "regression or a comparability warning).",
     )
-    groups.add_argument("--baseline", nargs="+", required=True, metavar="FILE", help="trace files of the baseline runs")
-    groups.add_argument("--current", nargs="+", required=True, metavar="FILE", help="trace files of the current runs")
+    groups.add_argument(
+        "--baseline", nargs="+", required=True, metavar="INPUT", help="trace files or db: selections: baseline runs"
+    )
+    groups.add_argument(
+        "--current", nargs="+", required=True, metavar="INPUT", help="trace files or db: selections: current runs"
+    )
+    groups.add_argument("--project", metavar="PROJECT_ID", help=STORED_HELP)
     groups.add_argument("--task", metavar="NAME", help="only runs whose run (root span) name is NAME")
     groups.add_argument("--json", action="store_true", help="machine-readable output")
     groups.add_argument("--no-error-messages", action="store_true", help="omit error messages entirely")
@@ -546,13 +700,33 @@ def build_parser() -> argparse.ArgumentParser:
         "Exit codes: 0 PASS, 1 missing file or no runs in the baseline file, 2 invalid policy or options, "
         "3 FAIL.",
     )
-    gate.add_argument("paths", nargs="+", metavar="FILE", help="trace files (SDK JSONL or JSON batches)")
+    gate.add_argument(
+        "paths", nargs="+", metavar="INPUT", help="trace files (SDK JSONL or JSON batches) or db: selections"
+    )
+    gate.add_argument("--project", metavar="PROJECT_ID", help=STORED_HELP)
     gate.add_argument("--policy", required=True, metavar="POLICY", help="requirements file (TOML)")
-    gate.add_argument("--baseline", metavar="FILE", help="known-good run for the policy's [baseline] requirements")
+    gate.add_argument(
+        "--baseline", metavar="INPUT", help="known-good run (file or db: selection) for the [baseline] requirements"
+    )
     gate.add_argument("--baseline-trace", metavar="ID", help="pick the baseline run by trace id prefix")
     gate.add_argument("--json", action="store_true", help="machine-readable output")
     gate.add_argument("--no-error-messages", action="store_true", help="omit error messages entirely")
     gate.set_defaults(handler=_gate)
+
+    traces = commands.add_parser("traces", help="stored traces").add_subparsers(dest="traces_command", metavar="ACTION")
+    traces.required = True
+    traces_list = traces.add_parser(
+        "list",
+        help="list a project's stored traces (most recently started first)",
+        description="List stored traces of --project, optionally filtered by a db: selection (keys: trace, task, "
+        "agent, session, environment, status, since, until, limit). Each line's trace id can be analyzed with "
+        "db:trace=<id>. Content is never read.",
+    )
+    traces_list.add_argument("selection", nargs="?", metavar="SELECTION", help="e.g. db:task=answer_ticket&limit=20")
+    traces_list.add_argument("--project", required=True, metavar="PROJECT_ID")
+    traces_list.add_argument("--limit", type=int, default=50, help="without a SELECTION: how many (default 50)")
+    traces_list.add_argument("--json", action="store_true", help="machine-readable output")
+    traces_list.set_defaults(handler=_traces_list)
 
     serve = commands.add_parser(
         "serve",
@@ -566,9 +740,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     dash = commands.add_parser(
         "dashboard",
-        help="start the web dashboard (sample data and/or a directory of trace files; no database needed)",
+        help="start the web dashboard (sample data, a directory of trace files, and/or a project's stored traces)",
         description="Serve the read-only dashboard. Sample recordings from examples/diagnose are shown by default; "
-        "--data-dir adds your own JSONL trace files, protected by a token printed at start-up.",
+        "--data-dir adds your own JSONL trace files and --project a project's traces stored in PostgreSQL "
+        "(AOBS_DATABASE_URL), both protected by a token printed at start-up.",
     )
     dash.add_argument("--host", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
     dash.add_argument("--port", type=int, default=8800, help="port (default 8800)")
@@ -577,6 +752,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--samples-dir", metavar="DIR", help="where the sample recordings live (default examples/diagnose)"
     )
     dash.add_argument("--no-samples", action="store_true", help="do not show the sample datasets")
+    dash.add_argument(
+        "--project", metavar="PROJECT_ID", help="also show this project's stored traces (needs the token)"
+    )
     dash.set_defaults(handler=_dashboard)
     return parser
 

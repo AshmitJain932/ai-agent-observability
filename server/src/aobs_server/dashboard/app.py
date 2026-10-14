@@ -4,14 +4,17 @@ Routes (all GET):
 
 * ``/`` and ``/static/*``: the UI (plain HTML, CSS and JavaScript; no build step).
 * ``/api/health``.
-* ``/api/datasets``: the datasets on offer, with their kind (``sample`` or ``local``) and presets.
+* ``/api/datasets``: the datasets on offer, with their kind (``sample``, ``local`` or ``stored``)
+  and presets.
 * ``/api/datasets/{id}/overview``, ``/runs``, ``/runs/{trace_id}``, ``/files``.
 * ``/api/datasets/{id}/compare``: one baseline run vs one current run (``aobs-server compare``).
 * ``/api/datasets/{id}/compare-groups``: groups of runs (``aobs-server compare-groups``).
 
 Sample datasets are public repository data and need no credentials. The local dataset
-(``--data-dir``) requires the dashboard token on every request (``Authorization: Bearer <token>``),
-compared in constant time. No route touches the database or any tenant's data.
+(``--data-dir``) and the stored dataset (``--project``: one project's traces in PostgreSQL) require
+the dashboard token on every request (``Authorization: Bearer <token>``), compared in constant time.
+Only the stored dataset reads the database, through ``diagnosis.stored`` (project-scoped, the
+project's current privacy policy, content never read).
 """
 
 from __future__ import annotations
@@ -23,14 +26,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..diagnosis.compare import NoRunsError, SelectionError, build_comparisons
+from ..diagnosis.loader import Source
 from ..diagnosis.repeated import GroupConfig, build_group_report
 from ..errors import ApiError, BadRequest, NotFound
 from .datasets import (
@@ -44,6 +50,7 @@ from .datasets import (
     run_detail,
     run_summary,
     sample_datasets,
+    stored_dataset,
 )
 
 logger = logging.getLogger("aobs.dashboard")
@@ -72,15 +79,23 @@ class DashboardUnauthorized(ApiError):
         )
 
 
+class DatasetUnavailable(ApiError):
+    status, slug, title = 503, "dataset-unavailable", "Dataset unavailable"
+
+
 @dataclass(frozen=True)
 class DashboardConfig:
     samples_dir: Path | None = REPO_EXAMPLES  # None: no sample datasets
     data_dir: Path | None = None  # a directory of the operator's own JSONL files
-    token: str | None = None  # required for the local dataset; must be set when data_dir is
+    token: str | None = None  # required for the local and stored datasets
+    project_id: UUID | None = None  # show this project's stored traces (needs engine)
+    engine: Any = None  # sqlalchemy Engine of the collector's database
 
     def __post_init__(self) -> None:
-        if self.data_dir is not None and not self.token:
-            raise ValueError("a token is required when data_dir is set")
+        if (self.data_dir is not None or self.project_id is not None) and not self.token:
+            raise ValueError("a token is required when data_dir or project_id is set")
+        if (self.project_id is None) != (self.engine is None):
+            raise ValueError("project_id and engine go together")
 
 
 def _problem(error: ApiError) -> JSONResponse:
@@ -94,9 +109,11 @@ def _problem(error: ApiError) -> JSONResponse:
     return JSONResponse(body, status_code=error.status, headers=error.headers, media_type="application/problem+json")
 
 
-def without_paths(value: Any, directory: Path) -> Any:
+def without_paths(value: Any, directory: Path | None) -> Any:
     """Replace the dataset directory in every string with nothing, so responses name files by their
     listed names and never reveal where the server keeps them."""
+    if directory is None:  # a stored dataset names its inputs by trace id
+        return value
     prefixes = sorted({f"{directory}/", f"{directory.resolve()}/"}, key=len, reverse=True)
     if isinstance(value, str):
         for prefix in prefixes:
@@ -116,12 +133,16 @@ def get_dataset(dataset_id: str, request: Request) -> LoadedDataset:
     spec = store.specs.get(dataset_id)
     if spec is None:
         raise NotFound()
-    if spec.kind == "local":
+    if spec.kind != "sample":
         header = request.headers.get("authorization", "")
         supplied = header[7:] if header[:7].lower() == "bearer " else ""
         if not cfg.token or not hmac.compare_digest(supplied.encode(), cfg.token.encode()):
             raise DashboardUnauthorized()
-    loaded = store.get(dataset_id)
+    try:
+        loaded = store.get(dataset_id)
+    except SQLAlchemyError:
+        logger.warning("dashboard: the database could not be read", exc_info=True)
+        raise DatasetUnavailable("The collector's database could not be read; try again later") from None
     if loaded is None:  # pragma: no cover - spec checked above
         raise NotFound()
     return loaded
@@ -136,7 +157,9 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     specs: list[DatasetSpec] = sample_datasets(cfg.samples_dir) if cfg.samples_dir else []
     if cfg.data_dir is not None:
         specs.append(local_dataset(cfg.data_dir))
-    store = DatasetStore(specs)
+    if cfg.project_id is not None:
+        specs.append(stored_dataset(cfg.project_id))
+    store = DatasetStore(specs, cfg.engine)
 
     app = FastAPI(title="aobs dashboard", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = store
@@ -172,18 +195,16 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         logger.exception("dashboard request failed")
         return _problem(ApiError("The dashboard could not process this request"))
 
-    def source(ds: LoadedDataset) -> dict[str, Any]:
-        sample = ds.spec.kind == "sample"
-        return {
-            "kind": ds.spec.kind,
-            "dataset": ds.spec.id,
-            "title": ds.spec.title,
-            "note": "Sample recordings shipped with the repository, not live production traffic."
-            if sample
-            else "Local trace files on the machine running the dashboard (not live ingestion).",
-        }
+    notes = {
+        "sample": "Sample recordings shipped with the repository, not live production traffic.",
+        "local": "Local trace files on the machine running the dashboard (not live ingestion).",
+        "stored": "Traces stored by the collector (PostgreSQL), read with the project's current privacy policy.",
+    }
 
-    def path_of(ds: LoadedDataset, name: str) -> Path:
+    def source(ds: LoadedDataset) -> dict[str, Any]:
+        return {"kind": ds.spec.kind, "dataset": ds.spec.id, "title": ds.spec.title, "note": notes[ds.spec.kind]}
+
+    def path_of(ds: LoadedDataset, name: str) -> Source:
         path = ds.path(name)
         if path is None:
             raise BadRequest(f"unknown file {name[:80]!r} in this dataset")
@@ -219,7 +240,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
                     "title": s.title,
                     "kind": s.kind,
                     "description": s.description,
-                    "requires_token": s.kind == "local",
+                    "requires_token": s.kind != "sample",
                     "presets": [
                         {
                             "id": p.id,
@@ -300,6 +321,8 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             )
         except SelectionError as exc:  # includes NoRunsError
             raise BadRequest(without_paths(str(exc), ds.spec.directory)) from None
+        except SQLAlchemyError:
+            raise DatasetUnavailable("The collector's database could not be read; try again later") from None
         return {"source": source(ds), **without_paths(report.to_dict(), ds.spec.directory)}
 
     @app.get("/api/datasets/{dataset_id}/compare-groups")
@@ -319,6 +342,8 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             )
         except NoRunsError as exc:
             raise BadRequest(without_paths(str(exc), ds.spec.directory)) from None
+        except SQLAlchemyError:
+            raise DatasetUnavailable("The collector's database could not be read; try again later") from None
         return {"source": source(ds), **without_paths(report.to_dict(), ds.spec.directory)}
 
     return app

@@ -35,7 +35,7 @@ from ..model import assemble_events
 from ..model.assembly import AssemblyConfig, SpanNode, TraceView
 from ..model.versioning import AcceptedEvent
 from .compare import SUCCESS, RunProfile, money, profile, select_run
-from .loader import InputProblem, load
+from .loader import InputProblem, Source, load
 from .rules import RuleConfig, fields, label, repeated_identical_calls, root_cause_errors, short
 
 Result = Literal["pass", "fail", "unknown", "warn"]
@@ -947,7 +947,7 @@ def _gate_checks(
 
 
 def _load_runs(
-    paths: Sequence[Path], now: datetime, error_messages: bool
+    paths: Sequence[Source], now: datetime, error_messages: bool
 ) -> tuple[list[RunProfile], list[InputProblem]]:
     events: list[AcceptedEvent] = []
     sources: dict[str, str] = {}
@@ -968,7 +968,7 @@ def _load_runs(
 
 
 def load_baseline(
-    path: Path, now: datetime, trace_prefix: str | None, error_messages: bool
+    path: Source, now: datetime, trace_prefix: str | None, error_messages: bool
 ) -> tuple[RunProfile, list[InputProblem]]:
     """The one baseline run in ``path`` (or the one whose trace id starts with ``trace_prefix``).
     Raises ``NoRunsError`` or ``SelectionError`` from ``compare``."""
@@ -980,7 +980,7 @@ def load_baseline(
 
 def build_gate_report(
     policy: Policy,
-    paths: Sequence[Path],
+    paths: Sequence[Source],
     now: datetime,
     *,
     policy_path: str = "<policy>",

@@ -9,8 +9,9 @@ uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml examp
 uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml examples/diagnose/compare/refund_outage.jsonl   # FAIL, exit 3
 ```
 
-It reads the same files as `analyze` (JSONL written by the SDK's `JsonlFileExporter`, or JSON
-batches). It needs no database, no server, no network access and no LLM, and it sends nothing
+It reads the same inputs as `analyze`: JSONL written by the SDK's `JsonlFileExporter`, JSON
+batches, or, with `--project`, traces stored by the collector ([stored-analysis.md](stored-analysis.md)).
+With files it needs no database, no server, no network access and no LLM, and it sends nothing
 anywhere.
 
 ## Why a gate, when `analyze`, `compare` and `compare-groups` exist
@@ -39,8 +40,9 @@ them for details.
 aobs-server gate --policy POLICY.toml FILE... [--baseline FILE] [--baseline-trace ID] [--json] [--no-error-messages]
 ```
 
-* `FILE...`: trace files. Every run (trace) in them is checked, unless the policy's `task` limits
-  the check to runs whose root span has that name.
+* `FILE...`: trace files, or `db:` selections of a project's stored traces with `--project`
+  ([stored-analysis.md](stored-analysis.md)). Every run (trace) in them is checked, unless the
+  policy's `task` limits the check to runs whose root span has that name.
 * `--baseline FILE`: a known-good run for the `[baseline]` requirements. The file must hold one
   run, or `--baseline-trace` picks one by trace id prefix (as in `compare`).
 * Loading is exactly what `analyze` does: strict JSON, schema validation, then the ingest

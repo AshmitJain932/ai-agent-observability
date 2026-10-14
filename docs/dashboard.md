@@ -9,14 +9,14 @@ A read-only web dashboard for agent traces. It shows:
 It reuses the same code as `aobs-server analyze`, `compare` and `compare-groups`, so the dashboard
 and the CLI always agree.
 
-**What it reads:** saved JSONL trace files, the format the SDK's `JsonlFileExporter` writes.
+**What it reads:** saved JSONL trace files, the format the SDK's `JsonlFileExporter` writes, and
+traces stored by the collector.
 - **Sample data (default):** the recordings in `examples/diagnose/`. These are healthy, slow,
   flaky, refund-outage, retry-storm and crashed runs, recorded with the real SDK, and are clearly
   labelled *Sample data* in the dashboard.
 - **Local files:** your own trace files, from a directory you name with `--data-dir`.
-
-**What it does not read:** the collector database. The collector cannot receive and store runs yet;
-see *Not implemented yet* below.
+- **Stored traces:** the 200 most recently started traces of one project in the collector's
+  PostgreSQL database, with `--project` (see [Stored traces](#stored-traces-collector-database)).
 
 ## Quick start (GitHub Codespaces or any Linux/macOS machine)
 
@@ -114,6 +114,24 @@ Pick a **dataset** at the top right. Three sample datasets are built in:
 New or changed files are picked up on the next page load; no restart is needed. Malformed lines
 are listed as *input problems*, and the rest of the file is still used.
 
+## Stored traces (collector database)
+
+```bash
+export AOBS_DATABASE_URL=postgresql://aobs:change-me@127.0.0.1:5432/aobs
+uv run aobs-server dashboard --project <project_id>
+```
+
+- This adds a **Stored traces** dataset, the project's 200 most recently started traces, with all
+  four views. Trace ids take the place of file names, for example in *Compare*.
+- It needs the dashboard token, like local files. The project id and database are not shown
+  without it.
+- Traces are read with the project's current privacy policy, and stored content is never read.
+  Another project's traces are never shown.
+- New traces appear on the next page load.
+- If the database cannot be read, this dataset answers 503 and the other datasets keep working.
+
+More, including the CLI equivalents: [stored-analysis.md](stored-analysis.md).
+
 ## Security and privacy
 
 - **Content is never shown.** Every file goes through the collector's privacy step with a
@@ -125,8 +143,9 @@ are listed as *input problems*, and the rest of the file is still used.
   ignored.
 - **Local files need the token.** It is compared in constant time, and is never stored by the server
   or written to the address bar after use.
-- **No tenant data.** The dashboard does not load the database or the API-key layer at all, which a
-  test checks, so it cannot show another project's runs.
+- **Tenant data only with `--project`.** Without it, the dashboard does not load the database or
+  the API-key layer at all, which a test checks. With it, every query is filtered on that one
+  project, so another project's runs cannot be shown.
 - **Browser hardening.**
   - A strict Content-Security-Policy: scripts only from the dashboard itself, no inline scripts or
     styles, no `eval`.
@@ -158,10 +177,9 @@ Without a browser they are skipped with that instruction; the API tests still ru
 - the token-protected local mode.
 
 **Not implemented yet:**
-- **Live data from the collector.** There is no `POST /v1/ingest`, and nothing stores runs in
-  PostgreSQL yet. When that exists, the dashboard should read stored runs through
-  project-scoped, API-key-authenticated endpoints. The diagnosis rules already work on assembled
-  traces, so they can run on stored data unchanged.
+- **Reading stored runs over the HTTP API.** With `--project` the dashboard reads the database
+  directly, as the operator, for one project; there are no read-scoped, API-key-authenticated
+  list endpoints yet.
 - **User accounts and logins:** a token, not users.
 - Dashboards across many projects.
 - Alerting, charts over time, and cost estimates from price tables.

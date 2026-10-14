@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from ..model import assemble_events
 from ..model.assembly import AssemblyConfig, TraceView
-from .loader import InputProblem, Telemetry, load
+from .loader import InputProblem, Source, Telemetry, load
 from .rules import Finding, RuleConfig, diagnose, fields, label, ms, short
 
 PRIVACY_NOTE = (
@@ -136,7 +136,7 @@ def _span_row(trace: TraceView, span_id: str, depth: int) -> dict[str, Any]:
 
 
 def build_report(
-    paths: list[Path],
+    paths: Sequence[Source],
     now: datetime,
     rules: RuleConfig | None = None,
     error_messages: bool = True,

@@ -1,10 +1,15 @@
-"""Datasets the dashboard can show: named, server-side collections of saved trace files.
+"""Datasets the dashboard can show: named, server-side collections of saved trace files, or of
+traces stored in PostgreSQL.
 
-A dataset is a directory of JSONL files (what the SDK's ``JsonlFileExporter`` writes). Two kinds:
+A file dataset is a directory of JSONL files (what the SDK's ``JsonlFileExporter`` writes). Kinds:
 
 * **sample**: the example recordings shipped in ``examples/diagnose/`` (public repository data);
 * **local**: a directory the operator points the dashboard at (``--data-dir``); access needs the
   dashboard token.
+* **stored**: the most recently started traces of one project in the collector's database
+  (``--project``); access needs the dashboard token. Its "files" are trace ids, and each run is
+  read through ``diagnosis.stored`` (project-scoped queries, the project's current privacy policy,
+  content never read). The storage layer is only imported when such a dataset is configured.
 
 Files are only ever read from the dataset's own directory, chosen by the server from a directory
 listing: clients name a file by its listed name, never by a path. Every file goes through the same
@@ -12,8 +17,7 @@ steps as ``aobs-server analyze`` (strict parsing, schema validation, the ingest 
 metadata-only ceiling, trace assembly, diagnosis rules), so content is never loaded into a report
 and error messages are secret-scrubbed.
 
-There is no database access here: the collector does not store runs yet (no ingest pipeline), so
-nothing tenant-scoped is read or exposed.
+Only a stored dataset reads the database, and only its own project's traces.
 """
 
 from __future__ import annotations
@@ -26,15 +30,16 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 from ..diagnosis.compare import SUCCESS, RunProfile, money, profile
-from ..diagnosis.loader import InputProblem, load
+from ..diagnosis.loader import InputProblem, Source, load
 from ..diagnosis.report import TraceReport
 from ..diagnosis.rules import RuleConfig, diagnose
 from ..model import assemble_events
 from ..model.assembly import AssemblyConfig
 
-Kind = Literal["sample", "local"]
+Kind = Literal["sample", "local", "stored"]
 MAX_FILES = 200
 MAX_FILE_BYTES = 50 * 1024 * 1024
 REPO_EXAMPLES = Path(__file__).resolve().parents[4] / "examples" / "diagnose"
@@ -57,9 +62,10 @@ class DatasetSpec:
     id: str
     title: str
     kind: Kind
-    directory: Path
+    directory: Path | None  # None for a stored dataset
     description: str
     presets: tuple[Preset, ...] = ()
+    project_id: UUID | None = None  # a stored dataset's project
 
 
 @dataclass
@@ -80,13 +86,18 @@ class LoadedDataset:
     runs: list[Run]
     problems: list[InputProblem] = field(default_factory=list)
     skipped_files: list[str] = field(default_factory=list)
+    inputs: dict[str, Source] = field(default_factory=dict)  # a stored dataset's trace id -> its input
 
     def run(self, trace_id: str) -> Run | None:
         return next((r for r in self.runs if r.trace_id == trace_id), None)
 
-    def path(self, name: str) -> Path | None:
-        """The file's path if ``name`` is one of this dataset's listed files, else None."""
-        return self.spec.directory / name if name in self.files else None
+    def path(self, name: str) -> Source | None:
+        """The input behind ``name`` if it is one of this dataset's listed files, else None."""
+        if name not in self.files:
+            return None
+        if self.spec.directory is None:
+            return self.inputs.get(name)
+        return self.spec.directory / name
 
 
 def sample_datasets(base: Path | None = None) -> list[DatasetSpec]:
@@ -138,7 +149,7 @@ def sample_datasets(base: Path | None = None) -> list[DatasetSpec]:
             "crashed run and a healthy run. Recorded by examples/diagnose/make_samples.py.",
         ),
     ]  # fmt: skip
-    return [s for s in specs if s.directory.is_dir()]
+    return [s for s in specs if s.directory is not None and s.directory.is_dir()]
 
 
 def local_dataset(directory: Path) -> DatasetSpec:
@@ -149,6 +160,18 @@ def local_dataset(directory: Path) -> DatasetSpec:
         "local",
         directory,
         "JSONL trace files from the directory given with --data-dir, on the machine running the dashboard.",
+    )
+
+
+def stored_dataset(project_id: UUID) -> DatasetSpec:
+    # Title and description are shown without the token: they do not name the project or database.
+    return DatasetSpec(
+        "stored",
+        "Stored traces",
+        "stored",
+        None,
+        f"The {MAX_FILES} most recently started traces the collector stored for the project given with --project.",
+        project_id=project_id,
     )
 
 
@@ -176,10 +199,11 @@ def _signature(directory: Path, files: list[str]) -> tuple[tuple[str, int, int],
 
 
 class DatasetStore:
-    """Loads datasets on demand and caches them until a file changes."""
+    """Loads datasets on demand and caches them until a file (or a stored trace) changes."""
 
-    def __init__(self, specs: list[DatasetSpec]) -> None:
+    def __init__(self, specs: list[DatasetSpec], engine: Any = None) -> None:
         self.specs = {s.id: s for s in specs}
+        self.engine = engine  # sqlalchemy Engine for stored datasets
         self._cache: dict[str, tuple[Any, LoadedDataset]] = {}
         self._lock = threading.Lock()
 
@@ -187,6 +211,8 @@ class DatasetStore:
         spec = self.specs.get(dataset_id)
         if spec is None:
             return None
+        if spec.directory is None:
+            return self._get_stored(spec)
         if not spec.directory.is_dir():
             return LoadedDataset(spec, [], [], skipped_files=[f"directory {spec.directory} does not exist"])
         files, skipped = _list_files(spec.directory)
@@ -200,21 +226,54 @@ class DatasetStore:
             self._cache[dataset_id] = (signature, loaded)
         return loaded
 
+    def _get_stored(self, spec: DatasetSpec) -> LoadedDataset:
+        """Raises sqlalchemy errors when the database cannot be read (the app reports them)."""
+        from ..diagnosis.stored import Selection, StoredTraces, select_rows
 
-def _load(spec: DatasetSpec, files: list[str], skipped: list[str]) -> LoadedDataset:
+        assert spec.project_id is not None and self.engine is not None
+        with self.engine.connect() as conn:
+            rows = select_rows(conn, spec.project_id, Selection(limit=MAX_FILES))
+        signature = tuple((row.trace_id, row.last_received_at) for row in rows)
+        with self._lock:
+            cached = self._cache.get(spec.id)
+            if cached and cached[0] == signature:
+                return cached[1]
+        trace_ids = [row.trace_id for row in rows]
+        everything = StoredTraces(
+            self.engine, spec.project_id, Selection(tuple(trace_ids), limit=max(len(trace_ids), 1)), "stored traces"
+        )
+        inputs: dict[str, Source] = {
+            t: StoredTraces(self.engine, spec.project_id, Selection((t,), limit=1), t) for t in trace_ids
+        }
+        loaded = _runs_of(spec, trace_ids, [], [(everything, None)])
+        loaded.inputs = inputs
+        with self._lock:
+            self._cache[spec.id] = (signature, loaded)
+        return loaded
+
+
+def _runs_of(
+    spec: DatasetSpec, files: list[str], skipped: list[str], inputs: list[tuple[Source, str | None]]
+) -> LoadedDataset:
+    """Load each input and diagnose its runs; a run's "file" is its input's name, or its trace id."""
     now = datetime.now(UTC)
     dataset = LoadedDataset(spec, files, [], skipped_files=skipped)
-    for name in files:
-        path = spec.directory / name
-        telemetry = load([path])
+    for source, name in inputs:
+        telemetry = load([source])
         dataset.problems.extend(telemetry.problems)
         traces = assemble_events(telemetry.events, now, AssemblyConfig())
         for trace in traces.values():
             resource = telemetry.resources.get(trace.trace_id, {})
             report = TraceReport(trace, resource, diagnose(trace, RuleConfig()))
-            dataset.runs.append(Run(name, report, profile(trace, resource, name)))
+            file = name or trace.trace_id
+            dataset.runs.append(Run(file, report, profile(trace, resource, file)))
     dataset.runs.sort(key=lambda r: (r.report.trace.started_at or now, r.trace_id), reverse=True)
     return dataset
+
+
+def _load(spec: DatasetSpec, files: list[str], skipped: list[str]) -> LoadedDataset:
+    assert spec.directory is not None
+    return _runs_of(spec, files, skipped, [(spec.directory / name, name) for name in files])
 
 
 # --------------------------------------------------------------------------- summaries

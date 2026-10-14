@@ -13,8 +13,8 @@ policy and stores the result in PostgreSQL, retry-safely.
 - the SDK's `HttpExporter` talking to it.
 
 **Not built yet:**
-- a run list or search over stored traces (one trace can be read by id: [traces-api.md](traces-api.md));
-- the dashboard over stored data;
+- a run list or search **over HTTP** (one trace can be read by id: [traces-api.md](traces-api.md)).
+  The CLI and the dashboard can list and analyze stored traces: [stored-analysis.md](stored-analysis.md);
 - rate limiting, trace deletion and the retention job.
 
 See [What is not supported yet](#what-is-not-supported-yet). This is a working milestone, not a
@@ -297,9 +297,10 @@ uv run pytest server/tests/test_ingest_cli.py         # `aobs-server serve` star
 
 ## What is not supported yet
 
-- **Listing and searching stored traces.** One trace can be read by id
-  ([traces-api.md](traces-api.md)), but there is no run list or search yet (Phase 4). The dashboard
-  still reads JSONL files only.
+- **Listing and searching stored traces over HTTP.** One trace can be read by id
+  ([traces-api.md](traces-api.md)); there is no HTTP run list or search yet (Phase 4). The CLI
+  (`traces list`, `db:` selections) and the dashboard (`--project`) read stored traces directly
+  from the database: [stored-analysis.md](stored-analysis.md).
 - **Rate limiting:** no per-key limits, so the collector never answers 429.
 - **Trace deletion API and the retention job.** Tombstones are honoured, but nothing creates them
   yet, and nothing deletes data older than `retention_days`.

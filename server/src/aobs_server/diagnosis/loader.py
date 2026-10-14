@@ -4,6 +4,10 @@ Every batch goes through the same steps the collector uses: strict JSON parsing,
 version validation (``aobs_server.model``), then the ingest preparation step
 (``aobs_server.ingest.prepare``) with a ``metadata_only`` ceiling, so prompts, responses, tool
 arguments and results never reach the report and error messages are secret-scrubbed.
+
+A :class:`TraceSource` (traces stored in PostgreSQL, ``diagnosis.stored``) can stand wherever a
+file can; its events go through the same preparation step. This module never imports the
+storage layer itself.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, TypeAlias
 
 from ..ingest.prepare import prepare_events
 from ..model import loads_strict, validate_batch
@@ -30,6 +34,26 @@ class InputProblem:
     def __str__(self) -> str:
         where = self.source if self.line is None else f"{self.source}:{self.line}"
         return f"{where}: {self.message}"
+
+
+@dataclass(frozen=True)
+class SourceRead:
+    """What a :class:`TraceSource` read: events already validated (stored events were), the raw
+    resource of each trace, and problems to report against the source."""
+
+    events: list[AcceptedEvent]
+    resources: dict[str, dict[str, Any]]
+    problems: list[str]
+    traces: int
+
+
+class TraceSource(Protocol):
+    """A non-file input, e.g. a selection of stored traces. ``str()`` names it in reports."""
+
+    def read(self) -> SourceRead: ...
+
+
+Source: TypeAlias = Path | TraceSource
 
 
 @dataclass(frozen=True)
@@ -80,7 +104,7 @@ def _resource_summary(resource: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def load(paths: Iterable[Path], error_messages: bool = True) -> Telemetry:
+def load(paths: Iterable[Source], error_messages: bool = True) -> Telemetry:
     settings = privacy_settings(error_messages)
     events: list[AcceptedEvent] = []
     resources: dict[str, dict[str, Any]] = {}
@@ -89,6 +113,18 @@ def load(paths: Iterable[Path], error_messages: bool = True) -> Telemetry:
     batches = 0
     for path in paths:
         source = str(path)
+        if not isinstance(path, Path):
+            read = path.read()
+            batches += read.traces  # one stored trace is read as one unit
+            problems.extend(InputProblem(source, None, message) for message in read.problems)
+            prepared = prepare_events(tuple(read.events), settings)
+            counters.update(prepared.counters)
+            for item in prepared.accepted:
+                trace_id = item.event.trace_id
+                if trace_id not in resources:
+                    resources[trace_id] = _resource_summary(read.resources.get(trace_id, {}))
+            events.extend(prepared.accepted)
+            continue
         try:
             documents = list(_documents(path))
         except OSError as exc:

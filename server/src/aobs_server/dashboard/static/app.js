@@ -170,13 +170,15 @@ async function route() {
   const badge = document.getElementById("source-badge");
   badge.hidden = false;
   badge.className = `source-badge ${dataset.kind}`;
-  badge.textContent = dataset.kind === "sample" ? "Sample data" : "Local files";
+  badge.textContent = { sample: "Sample data", local: "Local files", stored: "Stored traces" }[dataset.kind] || dataset.kind;
   const note = document.getElementById("source-note");
   note.hidden = false;
   note.textContent =
     dataset.kind === "sample"
       ? `Sample recordings shipped with the repository, not live production traffic. ${dataset.description}`
-      : `${dataset.description} These are files on disk, not live ingestion.`;
+      : dataset.kind === "stored"
+        ? `${dataset.description} Read from the collector's database with the project's current privacy policy.`
+        : `${dataset.description} These are files on disk, not live ingestion.`;
   for (const tab of document.querySelectorAll(".tabs a")) {
     const active = tab.dataset.tab === r.view || (tab.dataset.tab === "runs" && r.view === "run");
     tab.setAttribute("href", `#/${encodeURIComponent(dataset.id)}/${tab.dataset.tab}`);
@@ -267,7 +269,9 @@ async function viewOverview() {
       show(h("h1", {}, "Overview"), problemsList(data.input_problems),
         empty("No runs in this dataset yet", state.dataset.kind === "local"
           ? "Write traces with aobs.export.JsonlFileExporter into this directory, then reload."
-          : "The sample files are missing; re-create them with the scripts in examples/diagnose/."));
+          : state.dataset.kind === "stored"
+            ? "The collector has stored no traces for this project yet; send some with the SDK's HttpExporter, then reload."
+            : "The sample files are missing; re-create them with the scripts in examples/diagnose/."));
       return;
     }
     const tin = data.tokens.input_tokens;

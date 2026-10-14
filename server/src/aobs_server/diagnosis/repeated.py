@@ -20,16 +20,15 @@ incomplete usage or cost, are excluded from the affected metrics and counted as 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Literal
 
 from ..model import assemble_events
 from ..model.assembly import AssemblyConfig
 from .compare import SUCCESS, NoRunsError, OpKey, RunProfile, profile
-from .loader import InputProblem, load
+from .loader import InputProblem, Source, load
 from .rules import RuleConfig, repeated_identical_calls
 from .stats import (
     far_outliers,
@@ -96,7 +95,7 @@ class Group:
         return Counter((r.run_name, r.agent) for r in self.runs)
 
 
-def load_group(label: str, paths: list[Path], now: datetime, task: str | None, error_messages: bool) -> Group:
+def load_group(label: str, paths: Sequence[Source], now: datetime, task: str | None, error_messages: bool) -> Group:
     group = Group(label, [str(p) for p in paths])
     for path in paths:
         telemetry = load([path], error_messages=error_messages)
@@ -654,8 +653,8 @@ def analyze_groups(base: Group, cur: Group, config: GroupConfig | None = None) -
 
 
 def build_group_report(
-    baseline_paths: list[Path],
-    current_paths: list[Path],
+    baseline_paths: Sequence[Source],
+    current_paths: Sequence[Source],
     now: datetime,
     config: GroupConfig | None = None,
     task: str | None = None,

@@ -15,15 +15,15 @@ from __future__ import annotations
 
 import statistics
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from ..model import assemble_events
 from ..model.assembly import AssemblyConfig, SpanNode, TraceView
-from .loader import InputProblem, load
+from .loader import InputProblem, Source, load
 from .rules import SEVERITY_ORDER, RuleConfig, Severity, fields, root_cause_errors, short
 
 OpKey = tuple[str, str]  # (kind, operation name)
@@ -659,7 +659,7 @@ class ComparisonReport:
 Loaded = tuple[dict[str, TraceView], dict[str, Any], tuple[InputProblem, ...]]
 
 
-def _runs(path: Path, now: datetime, error_messages: bool) -> Loaded:
+def _runs(path: Source, now: datetime, error_messages: bool) -> Loaded:
     telemetry = load([path], error_messages=error_messages)
     return assemble_events(telemetry.events, now, AssemblyConfig()), telemetry.resources, telemetry.problems
 
@@ -681,8 +681,8 @@ def select_run(traces: dict[str, TraceView], prefix: str | None, source: str) ->
 
 
 def build_comparisons(
-    baseline_path: Path,
-    current_paths: list[Path],
+    baseline_path: Source,
+    current_paths: Sequence[Source],
     now: datetime,
     config: CompareConfig | None = None,
     baseline_trace: str | None = None,

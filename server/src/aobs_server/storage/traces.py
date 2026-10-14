@@ -33,6 +33,7 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 from sqlalchemy import Connection, delete, func, insert, select, tuple_, update
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..model.assembly import TraceView, assemble
@@ -521,14 +522,19 @@ def record_diagnostics(
 
 
 def load_trace_events(
-    conn: Connection, project_id: UUID, trace_id: str, *, include_span_events: bool = True
+    conn: Connection,
+    project_id: UUID,
+    trace_id: str,
+    *,
+    include_span_events: bool = True,
+    include_content: bool = True,
 ) -> list[AcceptedEvent]:
-    """The stored (post-privacy) events of one trace in this project, content re-attached.
-    Another project's trace with the same id is never returned."""
+    """The stored (post-privacy) events of one trace in this project, content re-attached unless
+    ``include_content`` is false (then ``span_content`` is not read at all). Another project's
+    trace with the same id is never returned."""
     out: list[AcceptedEvent] = []
-    rows = conn.execute(
-        select(spans.c.span_id, spans.c.start_event, spans.c.end_event, span_content.c.content)
-        .select_from(
+    if include_content:
+        query = select(spans.c.span_id, spans.c.start_event, spans.c.end_event, span_content.c.content).select_from(
             spans.outerjoin(
                 span_content,
                 (span_content.c.project_id == spans.c.project_id)
@@ -536,15 +542,17 @@ def load_trace_events(
                 & (span_content.c.span_id == spans.c.span_id),
             )
         )
-        .where(spans.c.project_id == project_id, spans.c.trace_id == trace_id)
-        .order_by(spans.c.span_id)
+    else:
+        query = select(spans.c.span_id, spans.c.start_event, spans.c.end_event)
+    rows = conn.execute(
+        query.where(spans.c.project_id == project_id, spans.c.trace_id == trace_id).order_by(spans.c.span_id)
     )
     for row in rows:
         if row.start_event is not None:
             out.append(event_from_json(row.start_event, len(out)))
         if row.end_event is not None:
             body = dict(row.end_event)
-            if row.content is not None:
+            if include_content and row.content is not None:
                 body["content"] = row.content
             out.append(event_from_json(body, len(out)))
     if not include_span_events:
@@ -568,6 +576,68 @@ def trace_row(conn: Connection, project_id: UUID, trace_id: str) -> Any | None:
     return conn.execute(
         select(traces).where(traces.c.project_id == project_id, traces.c.trace_id == trace_id, ~tombstoned)
     ).first()
+
+
+def select_traces(
+    conn: Connection,
+    project_id: UUID,
+    *,
+    limit: int,
+    trace_ids: Sequence[str] = (),
+    root_name: str | None = None,
+    agent_name: str | None = None,
+    session_id: str | None = None,
+    environment: str | None = None,
+    status: str | None = None,
+    started_since: datetime | None = None,
+    started_before: datetime | None = None,
+) -> list[Any]:
+    """Summary rows of this project's traces that match every given filter, most recently started
+    first (traces without a start time last). Deleted (tombstoned) traces are never returned."""
+    tombstoned = (
+        select(trace_tombstones.c.trace_id)
+        .where(trace_tombstones.c.project_id == project_id, trace_tombstones.c.trace_id == traces.c.trace_id)
+        .exists()
+    )
+    query = select(traces).where(traces.c.project_id == project_id, ~tombstoned)
+    if trace_ids:
+        query = query.where(traces.c.trace_id.in_(list(trace_ids)))
+    if root_name is not None:
+        query = query.where(traces.c.root_name == root_name)
+    if agent_name is not None:
+        query = query.where(traces.c.agent_name == agent_name)
+    if session_id is not None:
+        query = query.where(traces.c.session_id == session_id)
+    if environment is not None:
+        query = query.where(traces.c.environments.any_() == environment)
+    if status is not None:
+        query = query.where(traces.c.status == status)
+    if started_since is not None:
+        query = query.where(traces.c.started_at >= started_since)
+    if started_before is not None:
+        query = query.where(traces.c.started_at < started_before)
+    query = query.order_by(traces.c.started_at.desc().nulls_last(), traces.c.trace_id).limit(limit)
+    return list(conn.execute(query))
+
+
+def trace_resources(conn: Connection, project_id: UUID, trace_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+    """The resource (service, SDK, environment) that sent each trace's root span, or else the
+    trace's first span by id, for traces of this project."""
+    if not trace_ids:
+        return {}
+    rows = conn.execute(
+        select(spans.c.trace_id, resources.c.resource)
+        .select_from(
+            spans.join(
+                resources,
+                (resources.c.project_id == spans.c.project_id) & (resources.c.resource_hash == spans.c.resource_hash),
+            )
+        )
+        .where(spans.c.project_id == project_id, spans.c.trace_id.in_(list(trace_ids)))
+        .order_by(spans.c.trace_id, spans.c.parent_span_id.is_not(None), spans.c.span_id)
+        .ext(distinct_on(spans.c.trace_id))
+    )
+    return {row.trace_id: dict(row.resource) for row in rows}
 
 
 def span_event_counts(conn: Connection, project_id: UUID, trace_id: str) -> tuple[dict[str, int], int]:

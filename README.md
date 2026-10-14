@@ -21,13 +21,14 @@ cost — as nested traces, regardless of framework or model provider.
 | Overhead benchmark + recorded baseline | `sdk/python/benchmarks/`, [docs/benchmarks.md](docs/benchmarks.md) | Done |
 | Offline trace diagnosis (`aobs-server analyze`): deterministic rules, evidence, suggestions | `server/src/aobs_server/diagnosis/`, [examples/diagnose](examples/diagnose/README.md) | Demo (no server or database needed) |
 | Cross-run regression detection (`aobs-server compare`): new failures, slowdowns, retries, tool/model/token/cost changes | `server/src/aobs_server/diagnosis/compare.py`, [examples/diagnose](examples/diagnose/README.md#demo-compare-runs-and-find-regressions) | Demo (no server or database needed) |
-| Web dashboard (`aobs-server dashboard`): overview, runs explorer, run details with diagnosis, two-run and group comparison, over sample data or local trace files | `server/src/aobs_server/dashboard/`, [docs/dashboard.md](docs/dashboard.md) | First version (reads files; no live ingestion yet) |
+| Web dashboard (`aobs-server dashboard`): overview, runs explorer, run details with diagnosis, two-run and group comparison, over sample data, local trace files or a project's stored traces | `server/src/aobs_server/dashboard/`, [docs/dashboard.md](docs/dashboard.md) | First version |
 | Repeated-run regression analysis (`aobs-server compare-groups`): medians, variation, exact rank / Fisher tests with Holm correction, honest "insufficient data" | `server/src/aobs_server/diagnosis/repeated.py`, `stats.py`, [examples/diagnose](examples/diagnose/README.md#demo-repeated-runs-with-statistics) | Demo (no server or database needed) |
 | Reliability gate (`aobs-server gate`): requirements in a TOML policy (outcome, completeness, duration, calls, retries, tokens, cost, tools, pass rate, baseline limits) → PASS/FAIL with evidence, exit code 3 on FAIL | `server/src/aobs_server/diagnosis/gate.py`, [docs/reliability-gate.md](docs/reliability-gate.md) | First version (no server or database needed) |
 | Server foundations: PostgreSQL schema + migrations, API keys, authorization, ingest privacy step | `server/src/aobs_server/` | Done (Phase 3) |
 | Ingestion API (`aobs-server serve`, `POST /v1/ingest`): API-key auth, privacy before storage, retry-safe idempotent merge, per-trace locking, trace summaries | `server/src/aobs_server/api/`, `ingest/`, `storage/traces.py`, [docs/ingestion.md](docs/ingestion.md) | First version (Phase 3; no rate limiting or retention job yet) |
 | Trace read API (`GET /v1/projects/{id}/traces/{trace_id}`, `…/events`): read-scoped keys, uniform 404 across projects, content opt-in under the project's current privacy settings, pagination | `server/src/aobs_server/query/`, [docs/traces-api.md](docs/traces-api.md) | First version (Phase 3; no run list or search yet) |
-| Query API and dashboard over runs stored by the collector | — | Phase 4 |
+| Analysis of stored traces: `db:` selections for `analyze`, `compare`, `compare-groups`, `gate`; `traces list`; a *Stored traces* dashboard dataset (`--project`) | `server/src/aobs_server/diagnosis/stored.py`, [docs/stored-analysis.md](docs/stored-analysis.md) | First version (CLI and dashboard read PostgreSQL directly) |
+| HTTP query API (run list, search, analysis over read-scoped keys) | — | Phase 4 |
 
 ## Try it
 
@@ -102,6 +103,24 @@ FAIL     run.tools.issue_refund.max_failures: 1 failure(s) of 'issue_refund', li
 `server/tests/test_gate.py::test_readme_demo_records_fresh_runs_with_the_sdk_and_gates_them` runs
 the same steps.
 
+### Analyze traces stored by the collector (PostgreSQL)
+
+Every analysis command also reads the traces the collector stored. Set `AOBS_DATABASE_URL`, name
+the project, and select traces with `db:` instead of a file (setup: [docs/ingestion.md](docs/ingestion.md#quick-start)):
+
+```bash
+uv run aobs-server traces list --project <project_id>                       # newest first, with db:trace=<id> inputs
+uv run aobs-server analyze --project <project_id> db:trace=<trace_id>
+uv run aobs-server compare --project <project_id> db:trace=<baseline_id> db:trace=<current_id>
+uv run aobs-server compare-groups --project <project_id> \
+  --baseline 'db:task=restock_check&until=2026-10-08' --current 'db:task=restock_check&since=2026-10-13'
+uv run aobs-server gate --project <project_id> --policy examples/diagnose/gate/support_agent.toml \
+  'db:task=answer_ticket&since=2026-10-13'
+uv run aobs-server dashboard --project <project_id>                         # adds a token-protected "Stored traces" dataset
+```
+
+Selections, isolation, privacy, exit codes and limits: [docs/stored-analysis.md](docs/stored-analysis.md).
+
 ## Development
 
 ```bash
@@ -122,6 +141,7 @@ Python 3.11 run: `UV_PROJECT_ENVIRONMENT=.venv-311 uv run --python 3.11 pytest`.
 |---|---|
 | [docs/ingestion.md](docs/ingestion.md) | Collector: PostgreSQL setup, API keys, `POST /v1/ingest` request/response, limits, duplicates, retries, errors |
 | [docs/traces-api.md](docs/traces-api.md) | Reading a stored trace and its span events: endpoints, pagination, tenant isolation, privacy |
+| [docs/stored-analysis.md](docs/stored-analysis.md) | Analyzing stored traces: `db:` selections, `traces list`, analyze/compare/compare-groups/gate and the dashboard over PostgreSQL |
 | [docs/dashboard.md](docs/dashboard.md) | Web dashboard: start, use, local files mode, security, limits |
 | [docs/reliability-gate.md](docs/reliability-gate.md) | Reliability gate: policy file, checks, missing-data rules, exit codes, CI use, limits |
 | [docs/sdk.md](docs/sdk.md) | SDK usage, configuration, privacy, delivery guarantees, integrations, limitations |
