@@ -144,7 +144,7 @@ A processed batch always gets **200**, even if some or all events were rejected:
 - **`notices`:** non-zero counters for what the server did, for example:
   - `content_dropped_policy`, `content_dropped_oversize`;
   - `error_messages_dropped_policy`, `stack_traces_dropped_policy`;
-  - `secrets_scrubbed`, `nul_characters_replaced`, `unknown_fields_dropped_policy`;
+  - `secrets_scrubbed`, `personal_data_redacted`, `nul_characters_replaced`, `unknown_fields_dropped_policy`;
   - `clock_skew_suspected`, `newer_schema_minor`.
 
   The same counters, plus duplicates, conflicts and rejections, are recorded per batch in
@@ -241,8 +241,8 @@ The project's settings are applied **before** anything is written:
 |---|---|
 | Span identity, timing, status, kind, names, model/provider/tool names, token counts, provider-reported cost, links, retry info, attributes | Yes. String attributes are secret-scrubbed. |
 | Prompts, responses, tool arguments, tool results (`content`) | Only up to the project ceiling. Above it, a part is stored as `{"status": "not_captured"}`. Under `redacted`, SDK-redacted parts are kept and scrubbed again; `captured` parts are dropped because the server cannot verify they were redacted. Parts over 64 KiB are dropped. Content lives in its own table, `span_content`. |
-| Error messages | If the project allows them (default yes), secret-scrubbed. |
-| Stack traces | Only if the project allows them (default no), secret-scrubbed. |
+| Error messages | If the project allows them (default yes), with secrets, email addresses and card numbers removed. |
+| Stack traces | Only if the project allows them (default no), with secrets, email addresses and card numbers removed. |
 | Fields from a newer schema minor | Only under a `full` ceiling (the server cannot tell whether they hold content). |
 | NUL characters | Replaced with U+FFFD, because PostgreSQL cannot store them. |
 | API key | Never. Only its hash, in `api_keys`. |

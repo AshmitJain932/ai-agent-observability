@@ -332,6 +332,20 @@ def test_metadata_only_project_stores_no_content_and_scrubs_secrets(engine: Engi
     assert content == {"input": {"status": "not_captured"}, "output": {"status": "not_captured"}}
 
 
+@pytest.mark.parametrize("ceiling", ["metadata_only", "redacted", "full"])
+def test_emails_and_card_numbers_in_error_text_are_stored_nowhere(engine: Engine, ceiling: str) -> None:
+    """Error text from an emitter that did not redact it (an older SDK, another language)."""
+    c = make_collector(engine, capture_ceiling=ceiling, stack_traces=True)
+    personal = "customer jane.doe@example.com paid with 4111 1111 1111 1111"
+    error = {"type": "LookupError", "message": personal, "stack": f"Traceback ...\nLookupError: {personal}"}
+    body = c.post(batch(start(TRACE, sid(1)), end(TRACE, sid(1), status="error", error=error))).json()
+    assert body["counts"]["accepted"] == 2
+    assert body["notices"]["personal_data_redacted"] == 4
+    stored = database_text(engine)
+    assert "jane.doe@example.com" not in stored and "4111 1111 1111 1111" not in stored
+    assert "[REDACTED:email]" in stored and "[REDACTED:card_number]" in stored
+
+
 def test_redacted_ceiling_keeps_only_redacted_content_scrubbed_again(engine: Engine) -> None:
     c = make_collector(engine, capture_ceiling="redacted")
     c.post(batch(*_private_trace()))

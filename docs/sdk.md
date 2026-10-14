@@ -128,7 +128,18 @@ raise `TypeError` like any Python function.
 
 Always, in every mode: error messages, stack traces and string attributes are secret-scrubbed
 (bearer tokens, `sk-…`/`pk-…` keys, AWS access keys, GitHub/Slack tokens, JWTs, private-key
-blocks, URL credentials, `password=…`-style assignments). Full-mode *content* is not scrubbed —
+blocks, URL credentials, `password=…`-style assignments), and error messages and stack traces
+also lose e-mail addresses and card numbers that pass a Luhn check (`[REDACTED:email]`,
+`[REDACTED:card_number]`), whatever `use_default_redactors` says. Other personal data (names,
+addresses, ids) is not recognized: set `capture_error_messages=False` if your exceptions can carry
+it. A private key whose `-----END …-----` marker is missing is removed up to the end of the text.
+To keep redaction fast, a message longer than 16 KiB is cut to its first 16 KiB, a string
+attribute longer than 8 KiB to its first 8 KiB, and a stack longer than 64 KiB to its last 64 KiB
+*before* scrubbing, and the text around the cut (the partial token, plus up to 64 characters, any
+unclosed private-key block and, at a stack's cut, the value after a cut-off `Bearer`/`password=`)
+is dropped rather than sent, so a secret split by the cut never leaves half-redacted. A single
+whitespace-free token longer than that is therefore dropped whole. The collector applies the
+same rules again before storing. Full-mode *content* is not scrubbed —
 use `redacted` if content may contain credentials. The SDK cannot stop code from putting personal
 data into span **names** or **attributes**; don't.
 
@@ -148,6 +159,12 @@ arguments; LLM request arguments excluding transport options such as `timeout`, 
 * Default key: random per process — fingerprints compare within one process (and its forked
   children). For comparison across processes and runs, configure a stable key (≥ 32 bytes, e.g.
   `python -c "import secrets; print(secrets.token_hex(32))"`) and a key id; rotate both together.
+* Equal inputs give equal fingerprints. Sets are sorted first, so their order (which depends on
+  the process's hash seed) does not matter. An input containing a value whose only text form is
+  its memory address (an object without a `__repr__`/`__str__`, a function, a lock, …) has no
+  stable form: the span gets **no** fingerprint, and `fingerprints_unavailable` is counted. Give
+  such argument types a `__repr__` that shows their state, or exclude them (e.g. pass ids, not
+  client objects). A `__repr__` that omits state (`Order()`) makes different inputs look equal.
 
 ## Delivery guarantees
 
@@ -178,7 +195,8 @@ arguments; LLM request arguments excluding transport options such as `timeout`, 
 `events_dropped_queue_full`, `events_dropped_after_shutdown`, `events_dropped_export_failed`,
 `events_dropped_oversize`, `events_degraded_oversize`, `events_rejected_by_collector`,
 `attributes_dropped`, `values_sanitized`, `invalid_usage_values`, `invalid_cost_values`,
-`content_truncated`, `uninstrumented_calls`, `internal_errors`, `config_warnings`, plus
+`content_truncated`, `uninstrumented_calls`, `fingerprints_unavailable`, `internal_errors`,
+`config_warnings`, plus
 `last_error` / `last_error_at`. Problems are also logged on the `aobs` logger at WARNING, at most
 once a minute per category.
 

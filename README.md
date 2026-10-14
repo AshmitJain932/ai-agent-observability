@@ -78,6 +78,30 @@ uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml examp
 
 See [docs/reliability-gate.md](docs/reliability-gate.md).
 
+### Reliability gate demo (no API key, no database)
+
+Record a healthy and a degraded run of the example support agent with the real SDK (a scripted
+model stands in for the LLM; the refund tool times out in the degraded run), then gate both:
+
+```bash
+uv run python examples/diagnose/make_compare_samples.py --out /tmp/aobs-gate-demo
+uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml /tmp/aobs-gate-demo/refund_ok.jsonl
+echo "exit code: $?"   # 0: PASS
+uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml /tmp/aobs-gate-demo/refund_outage.jsonl
+echo "exit code: $?"   # 3: FAIL
+```
+
+The second report fails two checks and shows each one's expected and actual value:
+
+```
+FAIL     run.require_success: the run ended with status error  [expected ok or ok_with_errors, actual error]
+           - root cause: tool 'issue_refund' failed with TimeoutError; span … (tool issue_refund) ended with status error …
+FAIL     run.tools.issue_refund.max_failures: 1 failure(s) of 'issue_refund', limit 0  [expected at most 0, actual 1]
+```
+
+`server/tests/test_gate.py::test_readme_demo_records_fresh_runs_with_the_sdk_and_gates_them` runs
+the same steps.
+
 ## Development
 
 ```bash

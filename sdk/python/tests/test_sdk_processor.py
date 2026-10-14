@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import threading
@@ -109,6 +110,60 @@ def test_queue_is_bounded_and_never_blocks(make_sdk: Callable[..., InMemoryExpor
     assert diag["events_dropped_queue_full"] >= 1000 - 100 - 10  # worker holds ≤ 1 batch in flight
     assert elapsed < 1.0  # producers were never blocked by the hung exporter
     exporter.release.set()
+    flush()
+
+
+class SpanEventLogHandler(logging.Handler):
+    """A handler that calls back into the SDK, like a log-to-span-event bridge. It also records
+    whether the SDK's queue lock was free when it ran (it must be: the lock is not re-entrant)."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.calls = 0
+        self.lock_was_free: list[bool] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.calls += 1
+        tracer = aobs.get_tracer()
+        if tracer is not None:
+            lock = tracer.processor._lock
+            acquired = lock.acquire(timeout=2)  # times out (instead of hanging) if this thread holds it
+            if acquired:
+                lock.release()
+            self.lock_was_free.append(acquired)
+            if not acquired:
+                return  # calling back now would deadlock this thread: fail the test, don't hang it
+        aobs.event("log", {"message": record.getMessage()[:100]})
+
+
+def test_queue_full_warning_with_a_reentrant_log_handler_does_not_hang(
+    make_sdk: Callable[..., InMemoryExporter],
+) -> None:
+    exporter = BlockingExporter()  # the collector hangs, so the queue fills up
+    make_sdk(exporter=exporter, max_queue_size=100, max_batch_events=10)
+    handler = SpanEventLogHandler()
+    sdk_logger = logging.getLogger("aobs")
+    sdk_logger.addHandler(handler)
+    finished = threading.Event()
+
+    def produce() -> None:
+        with aobs.run("r"):
+            for i in range(300):
+                with aobs.span(f"s{i}"):
+                    pass
+        finished.set()
+
+    try:
+        worker = threading.Thread(target=produce, daemon=True)
+        worker.start()
+        worker.join(timeout=20)
+        assert finished.is_set(), "the application thread hung inside the SDK"
+        assert handler.calls >= 1  # the queue-full warning reached the handler ...
+        assert handler.lock_was_free == [True] * handler.calls  # ... outside the queue lock
+        assert aobs.diagnostics()["events_dropped_queue_full"] >= 300 - 100 - 10
+    finally:
+        sdk_logger.removeHandler(handler)
+        exporter.release.set()
     flush()
 
 

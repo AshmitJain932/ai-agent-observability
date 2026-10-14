@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import re
+import subprocess
+import sys
 from collections.abc import Callable
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 import aobs
+from aobs import _sanitize as S
 from aobs.export import InMemoryExporter
-from aobs.privacy import RegexRedactor
+from aobs.privacy import EMAIL, RegexRedactor
 from sdk_support import end_by_name, flush
 
 SECRET_PROMPT = "Customer jane.doe@example.com paid with 4111 1111 1111 1111, key sk-proj-abcdefghijklmnopqrst"
@@ -136,3 +142,128 @@ def test_capture_mode_is_declared_in_resource(make_sdk: Callable[..., InMemoryEx
         pass
     flush()
     assert sdk.batches[0]["resource"]["capture"] == {"mode": mode, "error_messages": True, "stack_traces": False}
+
+
+# --------------------------------------------------------------------------- e-mail redaction in linear time
+
+# The regex the e-mail redactor replaced: same results, but quadratic on long runs of address characters.
+QUADRATIC_EMAIL_REGEX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+@settings(max_examples=3000, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(st.text(alphabet="aZ9._%+-@ x:/é", max_size=40))
+def test_email_redactor_finds_exactly_what_the_regex_found(text: str) -> None:
+    assert EMAIL(text) == QUADRATIC_EMAIL_REGEX.subn("[REDACTED:email]", text)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("jane@example.com+bob@example.com", "[REDACTED:email][REDACTED:email]"),  # adjacent addresses
+        ("a@b.cc9x@d.ee", "[REDACTED:email][REDACTED:email]"),
+        ("mail jane.doe@mail.example.co.uk now", "mail [REDACTED:email] now"),
+        ("u@d.com-1 and a@b.co9", "[REDACTED:email]-1 and [REDACTED:email]9"),
+        ("not an address: a@b.c, @example.com, jane@", "not an address: a@b.c, @example.com, jane@"),
+        (
+            "postgresql://[REDACTED:url_credentials]@db.internal/app",
+            "postgresql://[REDACTED:url_credentials]@db.internal/app",
+        ),
+    ],
+)
+def test_email_redactor_examples(text: str, expected: str) -> None:
+    assert EMAIL(text)[0] == expected == QUADRATIC_EMAIL_REGEX.sub("[REDACTED:email]", text)
+
+
+_EMAIL_ON_1_MIB = """
+import sys
+from aobs.privacy import EMAIL
+texts = {"run": "a" * 2**20, "at_run": "x@" + "a" * 2**20, "dots": "a." * 2**19,
+         "at_dots": "x@" + "a." * 2**19, "ats": "@" * 2**20}
+EMAIL(texts[sys.argv[1]])
+"""
+
+
+@pytest.mark.parametrize("case", ["run", "at_run", "dots", "at_dots", "ats"])
+def test_email_redactor_handles_1_mib_without_quadratic_time(case: str) -> None:
+    # In a child process: a quadratic regex holds the interpreter lock, so a thread could not time out.
+    try:
+        subprocess.run([sys.executable, "-c", _EMAIL_ON_1_MIB, case], check=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        pytest.fail("redacting 1 MiB took longer than 60 s (the quadratic regex needed minutes)")
+
+
+# --------------------------------------------------------------------------- JWTs and private keys in linear time
+
+QUADRATIC_JWT_REGEX = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}")
+QUADRATIC_PRIVATE_KEY_REGEX = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----")
+_JWT_PIECES = ["eyJ", "a", "Z", "9", "_", "-", ".", " ", "é", "²", "x"]  # é and ² are word characters for \b
+_KEY_PIECES = ["-----BEGIN ", "-----END ", "RSA ", "PRIVATE KEY-----", "-", "A", " ", "\n", "x"]
+
+
+@settings(max_examples=3000, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(st.lists(st.sampled_from(_JWT_PIECES), max_size=40).map("".join))
+def test_jwt_scanner_finds_exactly_what_the_regex_found(text: str) -> None:
+    assert S._scrub_jwts(text, "[REDACTED:jwt]") == QUADRATIC_JWT_REGEX.subn("[REDACTED:jwt]", text)
+
+
+@settings(max_examples=3000, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(st.lists(st.sampled_from(_KEY_PIECES), max_size=25).map("".join))
+def test_private_key_scanner_finds_what_the_regex_found_and_fails_closed(text: str) -> None:
+    expected, count = QUADRATIC_PRIVATE_KEY_REGEX.subn("[R]", text)
+    unclosed = S._PRIVATE_KEY_BEGIN.search(expected)  # the regex left it: no END marker follows it
+    if unclosed:
+        expected, count = expected[: unclosed.start()] + "[R]", count + 1
+    assert S._scrub_private_keys(text, "[R]") == (expected, count)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl", "[REDACTED:jwt]"),
+        ("t=eyJhbGciOiJ9.eyJzdWIiOiIx.c2lnbmF0.eyJhbGciOiJ9.eyJzdWIiOiIx.c2lnbmF0", "t=[REDACTED:jwt].[REDACTED:jwt]"),
+        ("aeyJhbGciOiJ9.eyJzdWIiOiIx.c2lnbmF0", "aeyJhbGciOiJ9.eyJzdWIiOiIx.c2lnbmF0"),  # no word boundary
+        ("a-eyJhbGciOiJ9.eyJzdWIiOiIx.c2lnbmF0", "a-[REDACTED:jwt]"),
+        ("-----BEGIN RSA PRIVATE KEY-----\nAAA\n-----END RSA PRIVATE KEY----- ok", "[REDACTED:private_key] ok"),
+        ("cfg -----BEGIN EC PRIVATE KEY-----\nMIIEowSECRET\nMORE", "cfg [REDACTED:private_key]"),  # no END
+    ],
+)
+def test_jwt_and_private_key_examples(text: str, expected: str) -> None:
+    assert S.scrub_secrets(text)[0] == expected
+
+
+_SECRETS_ON_1_MIB = """
+import sys
+from aobs import _sanitize as S
+from aobs._diagnostics import Diagnostics
+texts = {"jwt_run": "-eyJ" * 2**18, "jwt_dots": "eyJaaaaa." * 2**17,
+         "keys": "-----BEGIN RSA PRIVATE KEY-----" * 2**15}
+case, where = sys.argv[1:]
+if where == "scrub":
+    S.scrub_secrets(texts[case])
+else:
+    assert "app.body" in S.attributes({"app.body": texts[case]}, Diagnostics())
+"""
+
+
+@pytest.mark.parametrize("where", ["scrub", "attribute"])
+@pytest.mark.parametrize("case", ["jwt_run", "jwt_dots", "keys"])
+def test_secret_scrubbing_handles_1_mib_without_quadratic_time(case: str, where: str) -> None:
+    # In a child process: a quadratic regex holds the interpreter lock, so a thread could not time out.
+    try:
+        subprocess.run([sys.executable, "-c", _SECRETS_ON_1_MIB, case, where], check=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        pytest.fail("scrubbing 1 MiB took longer than 60 s (the quadratic regexes needed minutes)")
+
+
+def test_long_attributes_are_cut_before_scrubbing_without_leaking_what_the_cut_split(sdk: InMemoryExporter) -> None:
+    shrinking = ("sk-" + "a" * 97 + " ") * 80  # 8080 characters that scrub down to 1520
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJ" + "p" * 200 + ".c2lnbmF0dXJlXzEyMw"  # its signature is past the cut
+    key = "-----BEGIN RSA PRIVATE KEY-----\n" + "K" * 10_000 + "\n-----END RSA PRIVATE KEY-----"
+    assert len(shrinking) < 2 * S.MAX_ATTRIBUTE_STRING < len(shrinking) + len(jwt)
+    with aobs.span("s", attributes={"app.jwt": shrinking + jwt + " tail", "app.key": "id " + key + " tail"}):
+        pass
+    flush()
+    attributes = end_by_name(sdk, "s")["attributes"]
+    assert attributes["app.jwt"].startswith("[REDACTED:api_key]") and len(attributes["app.jwt"]) < 2000
+    assert "eyJhbGci" not in attributes["app.jwt"] and "ppp" not in attributes["app.jwt"]
+    assert "KKKK" not in attributes["app.key"]  # its END marker was past the cut: removed to the end

@@ -19,5 +19,6 @@ forbid_outcome_regression = true
 forbid_new_error_types = true
 forbid_removed_tools = true
 max_duration_increase_pct = 100
+min_duration_increase_ms = 100  # smaller slowdowns are timing noise (this is also the default)
 max_tool_call_increase = 1
 max_input_token_increase_pct = 50

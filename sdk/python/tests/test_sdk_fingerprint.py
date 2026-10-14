@@ -6,15 +6,21 @@ import base64
 import os
 import pickle
 import re
+import subprocess
+import sys
+import threading
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 
 import pytest
 
 import aobs
 from aobs.config import ConfigError
 from aobs.export import InMemoryExporter
-from aobs.fingerprint import Fingerprinter
-from sdk_support import end_by_name, ends, flush
+from aobs.fingerprint import Fingerprinter, Unfingerprintable
+from sdk_support import check_bodies, end_by_name, ends, flush
 
 PATTERN = re.compile(r"^hmac-sha256:[a-z0-9_-]{1,32}:[0-9a-f]{64}$")
 KEY = bytes(range(32))
@@ -158,3 +164,147 @@ def test_key_material_is_not_reused_from_os_environ_leak(monkeypatch: pytest.Mon
     config = build_config(diag)
     assert "zz-not-hex" not in repr(config)
     assert diag.snapshot()["config_warnings"] == 1
+
+
+# --------------------------------------------------------------------------- stable canonical form
+
+GOLDEN_KEY, GOLDEN_KEY_ID = b"k" * 32, "golden"
+
+
+class _Dumps:
+    def model_dump(self, mode: str = "json", exclude_none: bool = True) -> dict[str, object]:
+        return {"b": 2, "a": [1, "x"]}
+
+
+class _StableRepr:
+    def __repr__(self) -> str:
+        return "StableRepr(id=7)"
+
+
+# Digests recorded before fingerprints got their own canonical form: values that already had a
+# stable representation must keep exactly the same fingerprint (comparable under a configured key).
+GOLDEN = {
+    "dict": (
+        {"order_id": "1042", "qty": 2, "ok": True, "price": 9.5, "none": None},
+        "05922c33b8215da627f44c0b7a282d02c98f9b33a15dec885a73b3f45435d3a1",
+    ),
+    "list": ([1, "two", 3.0, None, False], "118405a3bf86ebcd8ce9d497492995ba45648c260b50651a145d44d6743435c1"),
+    "tuple_as_list": ((1, "two"), "cf037466deb2b654251cd83ea611b100749617d5417067de3dd89c908b7cc210"),
+    "nested": (
+        {"a": {"b": [1, {"c": "d"}]}, "z": []},
+        "00ceaf6de127bb5b26cb58da9d913331b051c43b4f670f347d1294d5a2a1bcbf",
+    ),
+    "unicode": ("Grüße, 世界", "d5c1f438af6ccdb349784f81b8f5c8db1d8aa1648dc79a66408a63550d98390a"),
+    "non_finite": (float("inf"), "9c4bfab0c426b698b1ca4aeb5eed3fe08240db7ac90a0b10e647c350d35e14b6"),
+    "int_keys": ({1: "a", 2: "b"}, "5849625b5d51528750030c151e1425cb65c6c64fa472a37e3fd9eb51c2ce0113"),
+    "decimal": (Decimal("1.50"), "6097a510392ad2849d20ee287a4e6944109bf832321b6a638e2f8156e565c72b"),
+    "date": (date(2026, 10, 14), "831ecbd8aad21cd2a34715dbceb7f6cb8b161c6ba2e25410e521784aaf32bc3a"),
+    "model_dump": (_Dumps(), "3f8e163fa9e8b057031e05ed01d87b3f495f99d39151d24bf827ffa0b90844e1"),
+    "stable_repr": (_StableRepr(), "f280c62a1a4134b917f4a8851e66659df6631c3168adfef61871be9ca1993ee2"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(GOLDEN))
+def test_fingerprints_of_stable_values_are_unchanged(name: str) -> None:
+    value, digest = GOLDEN[name]
+    assert Fingerprinter(GOLDEN_KEY, GOLDEN_KEY_ID).fingerprint(value) == f"hmac-sha256:{GOLDEN_KEY_ID}:{digest}"
+
+
+class Order:
+    """No __repr__: its default text form is its memory address."""
+
+    def __init__(self, order_id: str) -> None:
+        self.order_id = order_id
+
+
+def test_objects_without_a_stable_form_get_no_fingerprint_instead_of_a_wrong_one(sdk: InMemoryExporter) -> None:
+    @aobs.tool
+    def refund(order: Order) -> None:
+        return None
+
+    with aobs.run("r"):
+        for order_id in ["1042", "9999", "5555", "1042"]:  # a fresh object per call, as in real code
+            refund(Order(order_id))
+    flush()
+    calls = [e for e in ends(sdk) if e["name"] == "refund"]
+    assert len(calls) == 4
+    assert all("input_fingerprint" not in e for e in calls)  # unknown, never falsely equal or unequal
+    assert aobs.diagnostics()["fingerprints_unavailable"] == 4
+    check_bodies(sdk.bodies)
+
+
+@dataclass
+class OrderRecord:
+    order_id: str
+
+
+def test_values_with_a_stable_repr_still_get_comparable_fingerprints(sdk: InMemoryExporter) -> None:
+    @aobs.tool
+    def refund(order: OrderRecord) -> None:
+        return None
+
+    with aobs.run("r"):
+        for order_id in ["1042", "9999", "5555", "1042"]:
+            refund(OrderRecord(order_id))
+    flush()
+    fps = [e["input_fingerprint"] for e in ends(sdk) if e["name"] == "refund"]
+    assert fps[0] == fps[3]  # the same order twice
+    assert len({fps[0], fps[1], fps[2]}) == 3  # different orders
+    assert aobs.diagnostics()["fingerprints_unavailable"] == 0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        object(),
+        Order("1"),
+        Order("1").__init__,  # a bound method shows its object's address (a builtin like print does not)
+        lambda: None,
+        threading.Lock(),
+        {"client": Order("1")},
+        [1, Order("1")],
+        {Order("1"): "as a key"},
+        {"tags": frozenset({Order("1")})},
+    ],
+)
+def test_values_without_a_stable_form_are_refused(value: object) -> None:
+    with pytest.raises(Unfingerprintable):
+        Fingerprinter(GOLDEN_KEY, GOLDEN_KEY_ID).fingerprint(value)
+
+
+def test_nesting_beyond_the_limit_is_refused_instead_of_colliding() -> None:
+    deep: object = "leaf"
+    for _ in range(40):
+        deep = [deep]
+    with pytest.raises(Unfingerprintable):
+        Fingerprinter(GOLDEN_KEY, GOLDEN_KEY_ID).fingerprint(deep)
+
+
+def test_strings_that_look_like_addresses_are_data() -> None:
+    fp = Fingerprinter(GOLDEN_KEY, GOLDEN_KEY_ID)
+    assert PATTERN.match(fp.fingerprint({"note": "<object at 0x7f00>"}))  # strings are inputs, not reprs
+
+
+def test_set_element_order_does_not_matter() -> None:
+    fp = Fingerprinter(GOLDEN_KEY, GOLDEN_KEY_ID)
+    a = fp.fingerprint({"tags": {"alpha", "beta", "gamma", "delta"}, "ids": {3, 1, 2}})
+    b = fp.fingerprint({"tags": frozenset(["delta", "gamma", "beta", "alpha"]), "ids": frozenset([2, 3, 1])})
+    assert a == b
+    assert a != fp.fingerprint({"tags": {"alpha", "beta", "gamma"}, "ids": {3, 1, 2}})
+
+
+SEED_PROBE = """
+import json
+from aobs.fingerprint import Fingerprinter
+value = {"tags": {"alpha", "beta", "gamma", "delta", "epsilon", "zeta"}, "mixed": {"x", 1, ("t", 2), 2.5}}
+print(Fingerprinter(b"k" * 32, "seed").fingerprint(value))
+"""
+
+
+def test_set_fingerprints_do_not_depend_on_the_hash_seed() -> None:
+    results = set()
+    for seed in ("0", "1", "2", "12345"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        out = subprocess.run([sys.executable, "-c", SEED_PROBE], env=env, capture_output=True, text=True, check=True)
+        results.add(out.stdout.strip())
+    assert len(results) == 1 and PATTERN.match(results.pop())

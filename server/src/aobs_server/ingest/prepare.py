@@ -10,8 +10,9 @@ For each accepted event (as its canonical JSON):
    the project allows them; fields from newer schema minors (``extra``) are kept only under a
    ``full`` ceiling, because the server cannot know whether they carry content.
 3. **Secret scrubbing** of error messages, stack traces, string attributes and ``redacted``
-   content (``captured`` content under a ``full`` ceiling is stored as sent, as in the SDK).
-   Scrubbed strings are cut back to their schema length limits.
+   content (``captured`` content under a ``full`` ceiling is stored as sent, as in the SDK);
+   error messages and stack traces also lose email addresses and card numbers, under every
+   ceiling. Scrubbed strings are cut back to their schema length limits.
 4. **Content size limit**: a content part whose value (after scrubbing) is larger than 64 KiB is
    replaced with ``{"status": "not_captured"}``. Size is measured exactly as the SDK caps it
    (UTF-8 bytes of a string; compact JSON with ``ensure_ascii=False`` otherwise), so SDK output
@@ -35,7 +36,7 @@ from pydantic import TypeAdapter, ValidationError
 from ..model.versioning import AcceptedEvent, FieldError, RejectedEvent
 from ..model.wire import Event, SpanEnd, SpanEvent, SpanStart
 from ..project_settings import CAPTURE_LEVELS, ProjectSettings
-from .scrub import scrub_secrets, scrub_to_fit
+from .scrub import scrub_error_text, scrub_secrets, scrub_to_fit
 
 MAX_CONTENT_PART_BYTES = 65_536
 MAX_ATTRIBUTE_CHARS = 4_096
@@ -141,15 +142,17 @@ def _apply_error(error: dict[str, Any], settings: ProjectSettings, counters: Cou
     error = dict(error)
     if "message" in error:
         if settings.error_messages:
-            error["message"], n = scrub_to_fit(error["message"], MAX_ERROR_MESSAGE_CHARS)
+            error["message"], n, personal = scrub_error_text(error["message"], MAX_ERROR_MESSAGE_CHARS)
             counters["secrets_scrubbed"] += n
+            counters["personal_data_redacted"] += personal
         else:
             del error["message"]
             counters["error_messages_dropped_policy"] += 1
     if "stack" in error:
         if settings.stack_traces:
-            error["stack"], n = scrub_to_fit(error["stack"], MAX_STACK_CHARS)
+            error["stack"], n, personal = scrub_error_text(error["stack"], MAX_STACK_CHARS)
             counters["secrets_scrubbed"] += n
+            counters["personal_data_redacted"] += personal
         else:
             del error["stack"]
             counters["stack_traces_dropped_policy"] += 1

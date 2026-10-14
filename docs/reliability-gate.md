@@ -5,8 +5,8 @@ file) and answers PASS or FAIL. On FAIL it exits with code 3, so a CI job stops.
 unknown check says why, with the spans of the trace that show it.
 
 ```bash
-uv run aobs-server gate --policy examples/diagnose/gate.toml examples/diagnose/compare/refund_ok.jsonl
-uv run aobs-server gate --policy examples/diagnose/gate.toml examples/diagnose/compare/refund_outage.jsonl   # FAIL, exit 3
+uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml examples/diagnose/compare/refund_ok.jsonl
+uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml examples/diagnose/compare/refund_outage.jsonl   # FAIL, exit 3
 ```
 
 It reads the same files as `analyze` (JSONL written by the SDK's `JsonlFileExporter`, or JSON
@@ -89,7 +89,8 @@ forbid_outcome_regression = true    # baseline succeeded, run does not
 forbid_new_error_types = true       # an operation fails with an error type the baseline did not have
 forbid_new_tools = false            # a tool the baseline never called
 forbid_removed_tools = true         # a tool the baseline called is no longer called
-max_duration_increase_pct = 50      # run duration vs the baseline's
+max_duration_increase_pct = 50      # run duration vs the baseline's ...
+min_duration_increase_ms = 100      # ... fails only if it is also this many ms slower (default 100)
 max_tool_call_increase = 2          # total tool calls, absolute
 max_input_token_increase_pct = 25
 ```
@@ -97,6 +98,13 @@ max_input_token_increase_pct = 25
 A policy with a `[baseline]` section needs `--baseline`, and `--baseline` needs a `[baseline]`
 section; either mismatch is a configuration error (exit code 2), so a CI job cannot silently skip
 the baseline requirements.
+
+**Timing noise.** Percentages of very short runs are mostly noise: the same healthy task recorded
+twice can take 6 ms and then 59 ms (+883 %). `baseline.max_duration_increase_pct` therefore fails
+only when the run is slower by more than that percentage **and** by more than
+`min_duration_increase_ms` milliseconds (default 100, the same threshold `compare` uses for a run
+slowdown; both limits inclusive). Set `min_duration_increase_ms = 0` for a pure percentage limit.
+`min_duration_increase_ms` without `max_duration_increase_pct` is a configuration error.
 
 ### Check results: PASS, FAIL, UNKNOWN
 
@@ -116,6 +124,7 @@ silently:
 | A tool or model call has no input fingerprint (fingerprinting off) | `run.max_redundant_calls`: UNKNOWN |
 | Several root spans | duration checks: UNKNOWN |
 | Baseline or current run unfinished | baseline duration and outcome checks: UNKNOWN |
+| Baseline duration 0 ms | `baseline.max_duration_increase_pct`: PASS if the run is at most `min_duration_increase_ms` slower, otherwise UNKNOWN (a percentage of 0 is undefined) |
 
 With `on_missing_data = "fail"` (the default) an UNKNOWN check fails its run. With `"warn"` it
 does not, but it stays listed as UNKNOWN in the report.

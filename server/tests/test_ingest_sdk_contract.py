@@ -18,7 +18,7 @@ from aobs_server.clock import FixedClock
 from aobs_server.config import Settings
 from aobs_server.model import assemble, merge_events, validate_batch
 from aobs_server.storage.traces import load_trace_events
-from ingest_support import NOW, Collector, LiveServer, batch, make_collector, sid, start, tid, zulu
+from ingest_support import NOW, Collector, LiveServer, batch, database_text, make_collector, sid, start, tid, zulu
 from tenants import make_key
 
 
@@ -92,6 +92,34 @@ def test_sdk_run_is_stored_and_reads_back_as_the_sdk_assembled_it(live: tuple[Co
         zulu(expected["spans"])
     )
     assert fetched["roots"] == expected["roots"] and fetched["summary"]["status"] == expected["status"]
+
+
+def test_personal_data_in_errors_reaches_no_table_even_with_the_most_permissive_settings(
+    live: tuple[Collector, LiveServer],
+) -> None:
+    """SDK in full mode without its default redactors, stack traces on; the project allows full
+    content, error messages and stack traces. Emails and card numbers in error text still never
+    reach storage."""
+    c, server = live
+    aobs.init(exporter=HttpExporter(server.url, api_key=c.key), service_name="contract", environment="dev",
+              capture="full", capture_stack_traces=True, use_default_redactors=False,
+              schedule_delay_s=0.02)  # fmt: skip
+    personal = "customer jane.doe@example.com paid with 4111 1111 1111 1111"
+
+    @aobs.tool
+    def charge(order_id: str) -> None:
+        raise LookupError(personal)
+
+    with aobs.run("answer_ticket") as run:
+        with pytest.raises(LookupError):
+            charge("A-1")
+        run.set_error("PaymentFailed", message=personal)
+    assert aobs.flush(5), aobs.diagnostics()
+    assert aobs.diagnostics()["events_rejected_by_collector"] == 0
+    stored = database_text(c.engine)
+    assert "LookupError" in stored and "PaymentFailed" in stored  # the errors themselves are stored
+    assert "jane.doe@example.com" not in stored and "4111 1111 1111 1111" not in stored
+    assert "[REDACTED:email]" in stored and "[REDACTED:card_number]" in stored
 
 
 def test_exporter_outcomes_match_the_ingest_contract(live: tuple[Collector, LiveServer]) -> None:

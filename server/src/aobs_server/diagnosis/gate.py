@@ -127,17 +127,38 @@ class RunSection(_Section):
         )
 
 
+#: Default ``min_duration_increase_ms``: as ``compare``'s ``min_run_ms``, an increase this small is
+#: run-to-run noise, however large it is in percent (a 6 ms baseline that takes 59 ms is +883%).
+DEFAULT_MIN_DURATION_INCREASE_MS = 100.0
+
+
 class BaselineSection(_Section):
     forbid_outcome_regression: bool = False
     forbid_new_error_types: bool = False
     forbid_new_tools: bool = False
     forbid_removed_tools: bool = False
     max_duration_increase_pct: Amount | None = None
+    min_duration_increase_ms: Amount | None = None  # modifies max_duration_increase_pct; not a requirement
     max_tool_call_increase: Count | None = None
     max_input_token_increase_pct: Amount | None = None
 
+    @model_validator(mode="after")
+    def _modifier_needs_its_requirement(self) -> BaselineSection:
+        if self.min_duration_increase_ms is not None and self.max_duration_increase_pct is None:
+            raise ValueError("min_duration_increase_ms only applies together with max_duration_increase_pct")
+        return self
+
+    @property
+    def duration_floor_ms(self) -> float:
+        floor = self.min_duration_increase_ms
+        return DEFAULT_MIN_DURATION_INCREASE_MS if floor is None else floor
+
     def has_requirements(self) -> bool:
-        return any(v is True or (v is not None and not isinstance(v, bool)) for _, v in self)
+        return any(
+            v is True or (v is not None and not isinstance(v, bool))
+            for name, v in self
+            if name != "min_duration_increase_ms"
+        )
 
 
 class Policy(_Section):
@@ -766,34 +787,7 @@ def baseline_checks(base: RunProfile, cur: RunProfile, policy: BaselineSection) 
             add(_pass(check_id, expected, "none", "every tool the baseline called was called"))
 
     if policy.max_duration_increase_pct is not None:
-        limit = policy.max_duration_increase_pct
-        check_id, expected = "baseline.max_duration_increase_pct", f"at most +{_num(limit)}%"
-        if not base.finished or base.duration_ms is None:
-            add(
-                _baseline_unfinished(check_id, expected)
-                if not base.finished
-                else _unknown(check_id, expected, "unknown", "the baseline has no single run duration")
-            )
-        elif not cur.finished or cur.duration_ms is None:
-            add(_unknown(check_id, expected, "unknown", "the run has no duration (unfinished or several roots)"))
-        elif base.duration_ms == 0:
-            add(_unknown(check_id, expected, "unknown", "the baseline duration is 0 ms, so a percentage is undefined"))
-        else:
-            pct = (cur.duration_ms - base.duration_ms) / base.duration_ms * 100
-            actual = f"{pct:+.1f}%"
-            evidence = (f"baseline {_num(base.duration_ms)} ms -> run {_num(cur.duration_ms)} ms",)
-            if pct > limit:
-                add(
-                    _fail(
-                        check_id,
-                        expected,
-                        actual,
-                        "the run is slower than the baseline by more than allowed",
-                        evidence=evidence,
-                    )
-                )
-            else:
-                add(_pass(check_id, expected, actual, "within the allowed slowdown", evidence=evidence))
+        add(_duration_increase(base, cur, policy.max_duration_increase_pct, policy.duration_floor_ms))
 
     if policy.max_tool_call_increase is not None:
         limit_n = policy.max_tool_call_increase
@@ -812,6 +806,47 @@ def baseline_checks(base: RunProfile, cur: RunProfile, policy: BaselineSection) 
     if policy.max_input_token_increase_pct is not None:
         add(_token_increase(base, cur, policy.max_input_token_increase_pct))
     return checks
+
+
+def _duration_increase(base: RunProfile, cur: RunProfile, limit_pct: float, floor_ms: float) -> Check:
+    """FAIL only if the run is slower than the baseline by more than ``limit_pct`` percent **and**
+    by more than ``floor_ms`` milliseconds (both limits inclusive)."""
+    check_id = "baseline.max_duration_increase_pct"
+    expected = f"at most +{_num(limit_pct)}%, or at most +{_num(floor_ms)} ms"
+    if not base.finished:
+        return _baseline_unfinished(check_id, expected)
+    if base.duration_ms is None:
+        return _unknown(check_id, expected, "unknown", "the baseline has no single run duration")
+    if not cur.finished or cur.duration_ms is None:
+        return _unknown(check_id, expected, "unknown", "the run has no duration (unfinished or several roots)")
+    delta = cur.duration_ms - base.duration_ms
+    evidence = (f"baseline {_num(base.duration_ms)} ms -> run {_num(cur.duration_ms)} ms ({delta:+,.1f} ms)",)
+    if delta <= floor_ms:
+        actual = f"{delta:+,.1f} ms"
+        message = (
+            f"the run is at most {_num(floor_ms)} ms slower than the baseline (min_duration_increase_ms): "
+            "a difference this small is treated as timing noise, whatever its percentage"
+        )
+        return _pass(check_id, expected, actual, message, evidence=evidence)
+    if base.duration_ms == 0:
+        return _unknown(
+            check_id,
+            expected,
+            f"{delta:+,.1f} ms",
+            "the baseline duration is 0 ms, so a percentage is undefined",
+            evidence=evidence,
+        )
+    pct = delta / base.duration_ms * 100
+    actual = f"{pct:+.1f}% ({delta:+,.1f} ms)"
+    if pct > limit_pct:
+        return _fail(
+            check_id,
+            expected,
+            actual,
+            "the run is slower than the baseline by more than both limits allow",
+            evidence=evidence,
+        )
+    return _pass(check_id, expected, actual, "within the allowed slowdown", evidence=evidence)
 
 
 def _token_increase(base: RunProfile, cur: RunProfile, limit: float) -> Check:

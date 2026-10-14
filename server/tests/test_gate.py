@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -345,6 +347,85 @@ def test_baseline_increase_boundaries() -> None:
     assert set(results(tight).values()) == {"fail"}
 
 
+# --------------------------------------------------------------------------- timing noise: minimum absolute increase
+
+
+def timed_run(tmp_path: Path, duration_ms: float, label: str) -> Path:
+    """A finished one-span run with an exact duration (no recorded timing involved)."""
+    payload = json.loads((REPO_ROOT / "schema/fixtures/valid/minimal_end_only.json").read_text())["payload"]
+    (event,) = payload["events"]
+    event.update(kind="agent", name="task", status="ok", duration_ms=duration_ms)
+    path = tmp_path / f"{label}.jsonl"
+    path.write_text(json.dumps(payload) + "\n")
+    return path
+
+
+def duration_check(tmp_path: Path, base_ms: float, cur_ms: float, **baseline: Any) -> Check:
+    base, cur = timed_run(tmp_path, base_ms, "base"), timed_run(tmp_path, cur_ms, "cur")
+    report = gate(None, cur, baseline_file=base, baseline=baseline)
+    return check(report, "baseline.max_duration_increase_pct")
+
+
+def test_tiny_absolute_increase_is_timing_noise_not_a_regression(tmp_path: Path) -> None:
+    result = duration_check(tmp_path, 6.0, 59.0, max_duration_increase_pct=50)  # +883%, but only +53 ms
+    assert result.result == "pass" and result.actual == "+53.0 ms"
+    assert "min_duration_increase_ms" in result.message and "timing noise" in result.message
+
+
+def test_healthy_rerun_as_baseline_no_longer_fails() -> None:
+    """The audit's false positive: the same healthy task recorded twice (6 ms, then 59 ms)."""
+    report = gate(
+        None,
+        PAIRS / "refund_ok.jsonl",
+        baseline_file=PAIRS / "refund_ok_rerun.jsonl",
+        baseline={"max_duration_increase_pct": 50},
+    )
+    assert report.verdict == "pass", render_gate_text(report)
+
+
+@pytest.mark.parametrize(
+    ("base_ms", "cur_ms", "expected"),
+    [
+        (100.0, 200.0, "pass"),  # +100 ms: exactly the default minimum (inclusive), although +100%
+        (100.0, 200.5, "fail"),  # +100.5 ms and +100.5%: above both limits
+        (1000.0, 1500.0, "pass"),  # +500 ms but exactly +50% (inclusive)
+        (1000.0, 1500.5, "fail"),  # +500.5 ms and +50.05%
+        (1000.0, 900.0, "pass"),  # faster
+    ],
+)
+def test_duration_increase_needs_both_limits_exceeded(
+    tmp_path: Path, base_ms: float, cur_ms: float, expected: str
+) -> None:
+    assert duration_check(tmp_path, base_ms, cur_ms, max_duration_increase_pct=50).result == expected
+
+
+def test_minimum_absolute_increase_is_configurable(tmp_path: Path) -> None:
+    no_floor = duration_check(tmp_path, 6.0, 59.0, max_duration_increase_pct=50, min_duration_increase_ms=0)
+    assert no_floor.result == "fail" and no_floor.actual == "+883.3% (+53.0 ms)"
+    wide = duration_check(tmp_path, 1000.0, 1900.0, max_duration_increase_pct=50, min_duration_increase_ms=1000)
+    assert wide.result == "pass"  # +90%, but within the configured +1000 ms
+    assert "at most +1,000.0 ms" in wide.expected
+
+
+def test_zero_ms_baseline(tmp_path: Path) -> None:
+    assert duration_check(tmp_path, 0.0, 50.0, max_duration_increase_pct=10).result == "pass"  # within the minimum
+    assert duration_check(tmp_path, 0.0, 500.0, max_duration_increase_pct=10).result == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("baseline", "message"),
+    [
+        ({"min_duration_increase_ms": 100}, "only applies together with max_duration_increase_pct"),
+        ({"forbid_new_tools": True, "min_duration_increase_ms": 100}, "only applies together"),
+        ({"max_duration_increase_pct": 10, "min_duration_increase_ms": -1}, "baseline.min_duration_increase_ms"),
+    ],
+)
+def test_minimum_absolute_increase_validation(baseline: dict[str, Any], message: str) -> None:
+    with pytest.raises(PolicyError, match="invalid policy") as info:
+        parse_policy({"version": 1, "baseline": baseline})
+    assert message in str(info.value)
+
+
 # --------------------------------------------------------------------------- malformed input
 
 
@@ -532,3 +613,30 @@ def test_existing_commands_are_unchanged(cli: Cli, capsys: pytest.CaptureFixture
     assert main(["analyze", str(TRACES / "healthy_run.jsonl")]) == 0
     assert main(["compare", str(PAIRS / "refund_ok.jsonl"), str(PAIRS / "refund_ok_rerun.jsonl")]) == 0
     capsys.readouterr()
+
+
+def test_readme_demo_records_fresh_runs_with_the_sdk_and_gates_them(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The README's demo, end to end: the SDK records a healthy and a degraded run of the example
+    agent (scripted model, no API key), the JSONL exporter writes them, and the gate checks them."""
+    subprocess.run(
+        [sys.executable, str(DIAGNOSE / "make_compare_samples.py"), "--out", str(tmp_path)],
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    policy = str(POLICIES / "support_agent.toml")
+    assert main(["gate", "--policy", policy, str(tmp_path / "refund_ok.jsonl")]) == 0
+    assert "aobs reliability gate: PASS" in capsys.readouterr().out
+    assert main(["gate", "--policy", policy, str(tmp_path / "refund_outage.jsonl")]) == 3
+    out = capsys.readouterr().out
+    assert "aobs reliability gate: FAIL" in out
+    assert (
+        "FAIL     run.require_success: the run ended with status error  [expected ok or ok_with_errors, actual error]"
+        in out
+    )
+    assert (
+        "FAIL     run.tools.issue_refund.max_failures: 1 failure(s) of 'issue_refund', limit 0"
+        "  [expected at most 0, actual 1]" in out
+    )

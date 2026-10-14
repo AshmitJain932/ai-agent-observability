@@ -4,28 +4,41 @@ NUL handling, newer-minor fields, clock skew — and that their output always st
 from __future__ import annotations
 
 import copy
+import inspect
+import json
+import re
+import subprocess
+import sys
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from test_merge import RESOURCE, accepted, end, start
 
+from aobs import _sanitize as sdk_sanitize
+from aobs import privacy as sdk_privacy
 from aobs._sanitize import scrub_secrets as sdk_scrub_secrets
+from aobs.privacy import EMAIL as SDK_EMAIL
 from aobs.privacy import CapturePolicy
+from aobs.privacy import scrub_error_text as sdk_scrub_error_text
 from aobs_server.config import ConfigError, Settings
+from aobs_server.ingest import scrub as server_scrub
 from aobs_server.ingest.prepare import (
     MAX_ATTRIBUTE_CHARS,
     MAX_CONTENT_PART_BYTES,
     MAX_ERROR_MESSAGE_CHARS,
+    MAX_STACK_CHARS,
     clock_skew_suspected,
     content_part_size,
     prepare_event,
     prepare_events,
     prepare_resource,
 )
-from aobs_server.ingest.scrub import scrub_secrets, scrub_to_fit
+from aobs_server.ingest.scrub import redact_emails, scrub_error_text, scrub_secrets, scrub_to_fit
 from aobs_server.model import validate_batch
 from aobs_server.model.versioning import AcceptedEvent
 from aobs_server.project_settings import ProjectSettings
@@ -202,6 +215,151 @@ def test_server_and_sdk_scrubbers_remove_the_same_secrets(text: str, fragment: s
     assert fragment not in server and fragment not in sdk
     assert n_server >= 1 and n_sdk >= 1
     assert server == sdk
+
+
+PERSONAL = "customer jane.doe@example.com paid with 4111 1111 1111 1111 (backup 5500-0000-0000-0004)"
+PERSONAL_FRAGMENTS = ("jane.doe@example.com", "4111 1111 1111 1111", "5500-0000-0000-0004")
+PERSONAL_REDACTED = "customer [REDACTED:email] paid with [REDACTED:card_number] (backup [REDACTED:card_number])"
+
+
+@pytest.mark.parametrize("ceiling", sorted(CEILINGS))
+def test_error_text_loses_emails_and_card_numbers_under_every_ceiling(ceiling: str) -> None:
+    settings = ProjectSettings(capture_ceiling=ceiling, error_messages=True, stack_traces=True)  # type: ignore[arg-type]
+    event = end(
+        status="error", error={**ERROR, "message": PERSONAL, "stack": f"Traceback ...\nLookupError: {PERSONAL}"}
+    )
+    body, counters = prep(event, settings)
+    assert body["error"]["message"] == PERSONAL_REDACTED
+    assert body["error"]["stack"] == f"Traceback ...\nLookupError: {PERSONAL_REDACTED}"
+    stored = json.dumps(body)
+    assert not any(fragment in stored for fragment in PERSONAL_FRAGMENTS)
+    assert counters["personal_data_redacted"] == 6
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        PERSONAL,
+        "no personal data here, order 1234 5678 9012 3456",  # fails the Luhn check: kept
+        "db postgresql://admin:hunter2pw@db.internal/app unreachable for ops@example.org",
+        "Bearer abcdefghijklmnop1234 for a.b+c@mail.example.co.uk",
+    ],
+)
+def test_server_and_sdk_redact_error_text_identically(text: str) -> None:
+    server, _, _ = scrub_error_text(text, MAX_ERROR_MESSAGE_CHARS)
+    assert server == sdk_scrub_error_text(text)
+    assert "@example" not in server and "hunter2pw" not in server
+
+
+# Text built from the characters the redactors care about: addresses, card digits, secret prefixes.
+_REDACTION_TEXT = st.text(alphabet="aZ9._%+-@ x:/=-", max_size=60).map(
+    lambda s: s.replace("x", "jane@example.com ").replace("Z", "4111 1111 1111 1111 ").replace("9", "sk-")
+)
+
+
+@settings(max_examples=2000, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(_REDACTION_TEXT)
+def test_server_and_sdk_redact_error_text_identically_for_any_text(text: str) -> None:
+    server, _, _ = scrub_error_text(text, MAX_ERROR_MESSAGE_CHARS)
+    assert server == sdk_scrub_error_text(text)
+
+
+QUADRATIC_EMAIL_REGEX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+@settings(max_examples=2000, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(st.text(alphabet="aZ9._%+-@ x:/é", max_size=40))
+def test_server_email_redaction_finds_exactly_what_the_regex_found(text: str) -> None:
+    assert redact_emails(text) == QUADRATIC_EMAIL_REGEX.subn("[REDACTED:email]", text)
+    assert redact_emails(text) == SDK_EMAIL(text)
+
+
+def test_server_and_sdk_secret_scanners_are_the_same_code() -> None:
+    for name in ("_scrub_private_keys", "_jwt_start", "_scrub_jwts"):
+        assert inspect.getsource(getattr(server_scrub, name)) == inspect.getsource(getattr(sdk_sanitize, name))
+    assert inspect.getsource(server_scrub._email_end) == inspect.getsource(sdk_privacy._email_end)
+    for name in ("_PRIVATE_KEY_BEGIN", "_PRIVATE_KEY_END", "_DOTTED_TOKEN"):
+        assert getattr(server_scrub, name).pattern == getattr(sdk_sanitize, name).pattern
+
+
+_SECRET_PIECES = ["eyJ", "a", "Z", "-", ".", " ", "-----BEGIN ", "-----END ", "RSA PRIVATE KEY-----", "\n", "sk-"]
+
+
+@settings(max_examples=2000, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(st.lists(st.sampled_from(_SECRET_PIECES), max_size=40).map("".join))
+def test_server_and_sdk_scrub_secrets_identically_for_any_text(text: str) -> None:
+    assert scrub_secrets(text) == sdk_scrub_secrets(text)
+
+
+def test_an_attribute_holding_a_private_key_without_its_end_is_stored_redacted() -> None:
+    key = "-----BEGIN RSA PRIVATE KEY-----\n" + "K" * (MAX_ATTRIBUTE_CHARS - 40)  # cut off by its sender
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlXzEyMw"
+    body, _ = prep(end(attributes={"app.key": key, "app.jwts": [jwt, "ok"]}), ProjectSettings())
+    assert body["attributes"] == {"app.key": "[REDACTED:private_key]", "app.jwts": ["[REDACTED:jwt]", "ok"]}
+
+
+_SCRUB_1_MIB = """
+import sys
+from aobs_server.ingest.scrub import scrub_secrets
+texts = {"jwt_run": "-eyJ" * 2**18, "jwt_dots": "eyJaaaaa." * 2**17,
+         "keys": "-----BEGIN RSA PRIVATE KEY-----" * 2**15}
+scrub_secrets(texts[sys.argv[1]])
+"""
+
+
+@pytest.mark.parametrize("case", ["jwt_run", "jwt_dots", "keys"])
+def test_server_secret_scrubbing_handles_1_mib_without_quadratic_time(case: str) -> None:
+    """1 MiB is the default request body limit; content and attribute arrays can approach it."""
+    try:
+        subprocess.run([sys.executable, "-c", _SCRUB_1_MIB, case], check=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        pytest.fail("scrubbing 1 MiB took longer than 60 s (the quadratic regexes needed minutes)")
+
+
+_PREPARE_FROM_STDIN = """
+import json, sys
+from pydantic import TypeAdapter
+from aobs_server.ingest.prepare import prepare_events
+from aobs_server.model.versioning import AcceptedEvent
+from aobs_server.model.wire import Event
+from aobs_server.project_settings import ProjectSettings
+adapter = TypeAdapter(Event)
+events = [AcceptedEvent(i, adapter.validate_python(e)) for i, e in enumerate(json.load(sys.stdin))]
+settings = ProjectSettings(capture_ceiling="full", error_messages=True, stack_traces=True)
+print(len(prepare_events(events, settings).accepted))
+"""
+
+
+EVENTS = 200
+
+
+def test_maximum_size_error_text_is_processed_efficiently() -> None:
+    """Every message and stack at the schema maximum, made of the long unbroken runs that made the
+    old e-mail regex quadratic (about 1.4 s per event: about 5 minutes for this batch). Runs in
+    a child process: a quadratic regex holds the interpreter lock, so a thread could not time out."""
+    adversarial = [  # each about 1.4 s for the old regex; milliseconds now
+        ("a" * MAX_ERROR_MESSAGE_CHARS, "a" * MAX_STACK_CHARS),
+        ("x@" + "a" * (MAX_ERROR_MESSAGE_CHARS - 2), "x@" + "a." * (MAX_STACK_CHARS // 2 - 1)),
+        ("1" * MAX_ERROR_MESSAGE_CHARS, "1" * MAX_STACK_CHARS),
+    ]
+    events = []
+    for i in range(EVENTS):
+        message, stack = adversarial[i % len(adversarial)]
+        event = end(span_id=f"{i + 1:016x}", status="error", error={**ERROR, "message": message, "stack": stack})
+        (item,) = accepted(event)  # schema-valid at the maximum sizes
+        events.append(item.canonical())
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c", _PREPARE_FROM_STDIN],
+            input=json.dumps(events),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"redacting {EVENTS} maximum-size error texts took longer than 60 s")
+    assert out.stdout.strip() == str(EVENTS)
 
 
 def test_server_also_scrubs_aobs_api_keys() -> None:
