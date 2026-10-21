@@ -160,16 +160,74 @@ Text by default; `--json` for machines. The JSON has `verdict`, `gate_checks`, a
 Order is deterministic (runs by source file, start time and trace id; checks in policy order),
 so two runs of the gate on the same files give the same output.
 
+Two report files for CI can be written as well; stdout and the exit code are unchanged:
+
+* `--junit FILE`: **JUnit XML**, the test-report format GitLab, Jenkins, Azure DevOps, CircleCI
+  and Buildkite show natively (GitHub through a test-report action).
+  - One test suite holds the gate-level checks; then one suite per checked run, with the trace id,
+    run name, status and input as properties.
+  - Each check is one test case. A failure's text holds the message, expected and actual values,
+    evidence and span ids.
+* `--markdown FILE`: a **Markdown summary**: the verdict, a table of failed checks (expected,
+  actual, why), the runs, and what was not counted. Write it to `"$GITHUB_STEP_SUMMARY"` to show it
+  on the GitHub Actions run page, or post it as a pull-request comment.
+
+Both reports are red exactly when the gate fails (exit code 3):
+
+| Check result | Reported as |
+|---|---|
+| PASS | passed |
+| FAIL or UNKNOWN of a gate-level check | failed |
+| FAIL of a run check (and UNKNOWN under `on_missing_data = "fail"`) | failed, or **skipped** with the reason when the gate still passed because `min_pass_rate` tolerates some failed runs |
+| UNKNOWN under `on_missing_data = "warn"` | skipped, with the reason |
+| WARN (`on_input_problems = "warn"`) | passed, with the warning attached |
+
+Trace data is escaped: characters XML cannot hold are replaced, and Markdown gets no markup,
+links, HTML or line breaks from trace names. Like the other outputs, the reports never contain
+content, and error messages are secret-scrubbed. The directory of a report file is created if
+needed; a file that cannot be written is exit code 1.
+
 ## In CI
 
+**GitHub Actions:** [`examples/ci/github-actions-agent-gate.yml`](../examples/ci/github-actions-agent-gate.yml)
+is a complete workflow to copy to `.github/workflows/`. It records runs, gates them, writes the
+job summary and keeps the JUnit report and traces as an artifact. Its core:
+
 ```yaml
-# .github/workflows/agent-gate.yml (example; adapt the paths)
-- run: uv run python examples/support_agent/run.py --scenario refund --out traces.jsonl
-- run: uv run aobs-server gate --policy agent-gate.toml traces.jsonl
+- name: Record agent runs (scripted mock model; no API key)
+  run: |
+    mkdir -p traces
+    uv run python examples/support_agent/run.py --scenario success --out traces/success.jsonl --quiet
+    uv run python examples/support_agent/run.py --scenario refund --out traces/refund.jsonl --quiet
+- name: Reliability gate
+  run: >-
+    uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml traces/*.jsonl
+    --junit reports/agent-gate.xml --markdown "$GITHUB_STEP_SUMMARY"
+```
+
+**GitLab CI** shows the JUnit report in merge requests:
+
+```yaml
+agent-gate:
+  image: python:3.12
+  script:
+    - pip install uv && uv sync --locked
+    - mkdir -p traces && uv run python examples/support_agent/run.py --scenario refund --out traces/refund.jsonl --quiet
+    - uv run aobs-server gate --policy agent-gate.toml traces/*.jsonl --junit agent-gate.xml --markdown agent-gate.md
+  artifacts:
+    when: always
+    reports:
+      junit: agent-gate.xml
+    paths: [agent-gate.md]
 ```
 
 The job fails when the gate exits non-zero. Recording the runs (here: the example agent with its
-scripted mock model) is your test harness's job; the gate only judges what was recorded.
+scripted mock model) is your test harness's job; the gate only judges what was recorded. To gate
+runs the collector stored instead of files, pass `db:` selections with `--project`
+([stored-analysis.md](stored-analysis.md)), e.g. `'db:task=answer_ticket&since=2026-10-13'`.
+
+`server/tests/test_gate_reports.py` runs the template's commands. Neither the workflow as a
+whole (GitHub's runners and actions) nor the GitLab job has been run from this repository.
 
 ## Limits
 
@@ -182,4 +240,5 @@ scripted mock model) is your test harness's job; the gate only judges what was r
 * Baseline checks compare against **one** run. A single baseline run is a single sample: use
   `compare-groups` to judge whether a difference is beyond normal run-to-run variation, and keep
   baseline limits generous.
-* No JUnit XML output yet; use `--json`.
+* JUnit test cases have no duration (`time="0"`): a check is a judgement over recorded data, not
+  a timed test.

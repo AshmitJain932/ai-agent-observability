@@ -64,6 +64,37 @@ def test_tool_outage_marks_tool_and_run_failed(example: ModuleType, tmp_path: Pa
     assert root["status"] == "error"
 
 
+def test_model_outage_marks_the_model_call_and_run_failed(example: ModuleType, tmp_path: Path) -> None:
+    out = tmp_path / "t.jsonl"
+    assert example.main(["--scenario", "model-outage", "--out", str(out), "--quiet"]) == 1
+    ends, _ = _trace(out)
+    assert sorted(e["kind"] for e in ends.values()) == ["agent", "llm"]  # no tool ran
+    llm = next(e for e in ends.values() if e["kind"] == "llm")
+    assert llm["status"] == "error" and llm["llm"]["provider"] == "mock_llm"
+    assert llm["error"]["origin"] == "provider" and llm["error"]["code"] == "503" and llm["error"]["retryable"]
+    root = next(e for e in ends.values() if e["parent_span_id"] is None)
+    assert root["status"] == "error" and root["error"]["type"] == llm["error"]["type"]
+
+
+def test_each_run_answers_its_own_ticket(example: ModuleType, tmp_path: Path) -> None:
+    sessions = []
+    for name in ("a", "b"):
+        out = tmp_path / f"{name}.jsonl"
+        assert example.main(["--out", str(out), "--quiet"]) == 0
+        ends, _ = _trace(out)
+        sessions.append(next(e for e in ends.values() if e["parent_span_id"] is None)["session_id"])
+    assert sessions[0] != sessions[1] and all(s.startswith("ticket-success-") for s in sessions)
+    out = tmp_path / "c.jsonl"
+    assert example.main(["--ticket", "T-1042", "--out", str(out), "--quiet"]) == 0
+    ends, _ = _trace(out)
+    assert next(e for e in ends.values() if e["parent_span_id"] is None)["session_id"] == "T-1042"
+
+
+def test_model_outage_is_mock_only(example: ModuleType, tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="needs --mode mock"):
+        example.main(["--mode", "live", "--scenario", "model-outage", "--out", str(tmp_path / "t.jsonl"), "--quiet"])
+
+
 def test_no_usage_mode_keeps_tokens_unknown(example: ModuleType, tmp_path: Path) -> None:
     out = tmp_path / "t.jsonl"
     assert example.main(["--no-usage", "--out", str(out), "--quiet"]) == 0

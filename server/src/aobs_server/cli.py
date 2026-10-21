@@ -20,6 +20,8 @@ from sqlalchemy import Connection
 from .config import ConfigError, Settings
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .diagnosis.loader import Source
 
 
@@ -408,7 +410,25 @@ def _gate(args: argparse.Namespace, settings: Settings) -> int:
         _print(report.to_dict())
     else:
         print(render_gate_text(report))
+    if args.junit or args.markdown:
+        from .diagnosis.gate_reports import render_gate_junit, render_gate_markdown
+
+        for target, render in ((args.junit, render_gate_junit), (args.markdown, render_gate_markdown)):
+            if target:
+                _write_report(Path(target), render(report))
     return 0 if report.verdict == "pass" else 3
+
+
+def _write_report(path: Path, text: str) -> None:
+    """Write a report file for CI, creating its directory; failing to is exit code 1. A file name
+    that is not valid UTF-8 (shown in the report as an input) is written with U+FFFD in its place."""
+    import re
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(re.sub("[\ud800-\udfff]", "\ufffd", text), encoding="utf-8")
+    except OSError as exc:
+        raise CommandError(f"cannot write {path}: {exc.strerror or exc}") from None
 
 
 def _traces_list(args: argparse.Namespace, settings: Settings) -> int:
@@ -697,7 +717,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="check saved runs against the requirements in a policy file: PASS or FAIL (for CI)",
         description="Check every run in the trace files against the requirements in POLICY (TOML; see "
         "docs/reliability-gate.md). Each check is PASS, FAIL or UNKNOWN (the trace lacks the data) with evidence. "
-        "Exit codes: 0 PASS, 1 missing file or no runs in the baseline file, 2 invalid policy or options, "
+        "--junit and --markdown also write CI report files. Exit codes: 0 PASS, 1 missing input, no runs in the "
+        "baseline, database unavailable or a report file that cannot be written, 2 invalid policy or options, "
         "3 FAIL.",
     )
     gate.add_argument(
@@ -711,6 +732,12 @@ def build_parser() -> argparse.ArgumentParser:
     gate.add_argument("--baseline-trace", metavar="ID", help="pick the baseline run by trace id prefix")
     gate.add_argument("--json", action="store_true", help="machine-readable output")
     gate.add_argument("--no-error-messages", action="store_true", help="omit error messages entirely")
+    gate.add_argument(
+        "--junit", metavar="FILE", help="also write a JUnit XML report (one test case per check) for CI test reports"
+    )
+    gate.add_argument(
+        "--markdown", metavar="FILE", help='also write a Markdown summary, e.g. --markdown "$GITHUB_STEP_SUMMARY"'
+    )
     gate.set_defaults(handler=_gate)
 
     traces = commands.add_parser("traces", help="stored traces").add_subparsers(dest="traces_command", metavar="ACTION")

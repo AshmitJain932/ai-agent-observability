@@ -2,6 +2,7 @@
 
     uv run python examples/support_agent/run.py                        # mock model, success
     uv run python examples/support_agent/run.py --scenario refund-outage   # tool fails
+    uv run python examples/support_agent/run.py --scenario model-outage    # model provider fails (simulated 503)
     uv run python examples/support_agent/run.py --capture redacted --no-usage
     AOBS_EXAMPLE_MODE=live OPENAI_API_KEY=... AOBS_EXAMPLE_MODEL=<model> \\
         uv run python examples/support_agent/run.py                    # real OpenAI-compatible API
@@ -9,17 +10,21 @@
 Telemetry is written to a JSON-lines file (``--out``, default ``traces.jsonl``);
 ``--endpoint`` sends it to the collector (``aobs-server serve``, key in ``AOBS_API_KEY``) instead. Afterwards the
 script validates the file with the Phase 1 model library and prints the reconstructed trace —
-exactly what the collector will see.
+exactly what the collector will see. Every run answers one ticket (``--ticket``, a fresh id by
+default), recorded as the run's session id: ``db:session=<ticket>`` selects that run in the
+collector's database.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import secrets
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -29,14 +34,25 @@ import aobs  # aobs
 from aobs.export import HttpExporter, JsonlFileExporter  # aobs
 from aobs.integrations import openai_compat  # aobs
 
-SCENARIOS = {
-    "success": ("Where is my order 1042?", False),
-    "refund": ("Please refund order 1042, it arrived broken.", False),
-    "refund-outage": ("Please refund order 1042, it arrived broken.", True),
+# SDK counters of events that did not reach the collector (docs/sdk.md, "Diagnostics counters").
+LOSS_COUNTERS = (
+    "events_dropped_queue_full",
+    "events_dropped_after_shutdown",
+    "events_dropped_export_failed",
+    "events_dropped_oversize",
+    "events_rejected_by_collector",
+)
+SCENARIOS = {  # question, refund API down, model provider down (both simulated)
+    "success": ("Where is my order 1042?", False, False),
+    "refund": ("Please refund order 1042, it arrived broken.", False, False),
+    "refund-outage": ("Please refund order 1042, it arrived broken.", True, False),
+    "model-outage": ("Where is my order 1042?", False, True),
 }
 
 
-def build_client(mode: str, report_usage: bool) -> tuple[Any, str]:
+def build_client(mode: str, report_usage: bool, model_outage: bool = False) -> tuple[Any, str]:
+    if mode == "live" and model_outage:
+        raise SystemExit("--scenario model-outage simulates a provider outage; it needs --mode mock")
     if mode == "live":
         from openai import OpenAI
 
@@ -46,7 +62,7 @@ def build_client(mode: str, report_usage: bool) -> tuple[Any, str]:
         return OpenAI(), model  # reads OPENAI_API_KEY / OPENAI_BASE_URL from the environment
     from mock_llm import mock_client
 
-    return mock_client(report_usage=report_usage), "mock-model"
+    return mock_client(report_usage=report_usage, fail_status=503 if model_outage else None), "mock-model"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,6 +74,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="traces.jsonl")
     parser.add_argument(
         "--endpoint", help="send to a collector (aobs-server serve; key in AOBS_API_KEY) instead of the file"
+    )
+    parser.add_argument(
+        "--ticket", help="the support ticket this run answers (default: a fresh ticket-<scenario>-<id>)"
     )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
@@ -71,14 +90,15 @@ def main(argv: list[str] | None = None) -> int:
         capture=args.capture,
         exporter=exporter,
     )
-    client, model = build_client(args.mode, report_usage=not args.no_usage)
+    question, refund_outage, model_outage = SCENARIOS[args.scenario]
+    ticket = args.ticket or f"ticket-{args.scenario}-{secrets.token_hex(4)}"
+    client, model = build_client(args.mode, report_usage=not args.no_usage, model_outage=model_outage)
     client = openai_compat.wrap(client, provider="mock_llm" if args.mode == "mock" else None)  # aobs
 
-    question, outage = SCENARIOS[args.scenario]
-    agent.REFUNDS.fail = outage
+    agent.REFUNDS.fail = refund_outage
     exit_code = 0
     try:
-        reply = agent.answer(client, model, question, ticket_id=f"ticket-{args.scenario}")
+        reply = agent.answer(client, model, question, ticket_id=ticket)
         if not args.quiet:
             print(f"agent: {reply}")
     except Exception as exc:
@@ -87,8 +107,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"agent failed: {type(exc).__name__}: {exc}")
     finally:
         ok = aobs.shutdown(timeout_s=5)  # aobs — flush before exit (also done automatically at exit)
-    if not ok:
-        print("warning: not all telemetry was exported", aobs.diagnostics())
+    diagnostics = aobs.diagnostics()
+    lost = sum(diagnostics.get(name, 0) for name in LOSS_COUNTERS)  # shutdown only says the flush finished
+    if not ok or lost:
+        print("warning: not all telemetry was exported", diagnostics)
+    elif args.endpoint and not args.quiet:
+        print(f"sent the run for ticket {ticket} to {args.endpoint}")
+        print(f"  find it: uv run aobs-server traces list --project <project id> 'db:session={quote(ticket, safe='')}'")
     if not args.endpoint and not args.quiet:
         print_trace(Path(args.out))
     return exit_code

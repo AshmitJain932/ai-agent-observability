@@ -1,0 +1,50 @@
+# Reliability gate for an AI agent in GitHub Actions (a template; it is not active in this repository).
+#
+# Records the agent's runs, checks them against a policy, and shows the result as the job summary
+# and a downloadable JUnit report. The job fails when the gate fails (exit code 3).
+#
+# To use it: copy this file to .github/workflows/agent-gate.yml, then replace the "Record agent
+# runs" step with your own test harness: any code that runs your agent with
+#   aobs.init(..., exporter=JsonlFileExporter("traces/<name>.jsonl"))
+# and replace the policy with yours (docs/reliability-gate.md). As written, it runs this
+# repository's example support agent with its scripted mock model: no API key and no calls to a
+# model provider. Pin the actions to versions (or commit SHAs) your organization trusts.
+#
+# server/tests/test_gate_reports.py runs these same commands, so they stay working.
+name: agent reliability gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+
+      - name: Record agent runs (scripted mock model; no API key)
+        run: |
+          mkdir -p traces
+          uv run python examples/support_agent/run.py --scenario success --out traces/success.jsonl --quiet
+          uv run python examples/support_agent/run.py --scenario refund --out traces/refund.jsonl --quiet
+
+      - name: Reliability gate
+        run: >-
+          uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml traces/*.jsonl
+          --junit reports/agent-gate.xml --markdown "$GITHUB_STEP_SUMMARY"
+
+      # The traces hold what the SDK's capture mode recorded: metadata only by default.
+      - name: Keep the report and the traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-gate
+          path: |
+            reports/
+            traces/
