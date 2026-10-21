@@ -81,7 +81,7 @@ Changes from the plan: SDK floor raised to Python 3.11 (architecture §4); the `
 integration is tested against `openai` 3.29.0 only; no console exporter (JSONL file + in-memory
 cover offline use).
 
-## Phase 3 — Ingestion API & storage
+## Phase 3 — Ingestion API & storage (in progress: ingestion and trace reads done 2026-10-13)
 
 Build: FastAPI app; Alembic migrations for tables in architecture.md §6; API keys with scopes and
 optional environment binding (create via CLI); `POST /v1/ingest`; idempotent merge reusing
@@ -90,20 +90,31 @@ span cap; size and rate limits, including limits JSON Schema cannot express (64 
 part); error format (RFC 9457 problem+json); trace deletion endpoint;
 retention job on `received_at`; `GET /v1/projects/{id}/traces/{trace_id}`.
 
+Status: everything up to `POST /v1/ingest`, merge, summaries, tombstone checks, the span cap,
+size and event-count limits and problem+json errors is built ([ingestion.md](ingestion.md),
+ADR-015), and so is `GET /v1/projects/{id}/traces/{trace_id}` with a span-event listing
+([traces-api.md](traces-api.md), ADR-016). Not built yet: rate limits, the trace deletion
+endpoint and the retention job.
+
 Acceptance:
-- [ ] SDK example → server → stored; retrieved trace equals the SDK-side assembled trace.
-- [ ] Restarting the server and Postgres loses nothing that was acknowledged.
-- [ ] Re-sending the same batch 5× leaves row counts unchanged; response reports duplicates.
-- [ ] Key for project A gets 404 (not 403, to avoid existence leaks) on every read of project B.
-- [ ] Bodies > limit → 413; malformed JSON → 400; invalid event → listed in `rejected`, others stored.
-- [ ] Content sent to a `metadata_only` project is not persisted (asserted at the DB level).
-- [ ] Contract test: the SDK's `HttpExporter` against the real ingest API — retry/permanent/
+- [x] SDK example → server → stored; retrieved trace equals the SDK-side assembled trace
+      (`test_ingest_sdk_contract.py`: SDK → HTTP ingest → HTTP `GET` of the trace).
+- [ ] Restarting the server and Postgres loses nothing that was acknowledged. (By design the
+      transaction commits before the 200 is sent; no restart test exists yet.)
+- [x] Re-sending the same batch 5× leaves row counts unchanged; response reports duplicates
+      (trace data rows; each batch adds one `ingest_diagnostics` row).
+- [x] Key for project A gets 404 (not 403, to avoid existence leaks) on every read of project B
+      (both read endpoints; also without the `read` scope; `test_traces_api.py`).
+- [x] Bodies > limit → 413; malformed JSON → 400; invalid event → listed in `rejected`, others stored.
+- [x] Content sent to a `metadata_only` project is not persisted (asserted at the DB level).
+- [x] Contract test: the SDK's `HttpExporter` against the real ingest API — retry/permanent/
       `rejected` semantics match ADR-014.
-- [ ] Two concurrent batches for the same trace produce a summary equal to a from-scratch
+- [x] Two concurrent batches for the same trace produce a summary equal to a from-scratch
       recomputation (concurrency test with two connections).
-- [ ] Events for a deleted trace arriving after deletion do not re-create it.
-- [ ] An environment-bound key cannot write another environment.
-- [ ] Tests run against real PostgreSQL 16, not SQLite.
+- [x] Events for a deleted trace arriving after deletion do not re-create it (tombstone written
+      directly in the test; the deletion endpoint is not built yet).
+- [x] An environment-bound key cannot write another environment.
+- [x] Tests run against real PostgreSQL 16, not SQLite.
 
 ## Phase 4 — Query API & dashboard
 

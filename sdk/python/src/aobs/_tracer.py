@@ -28,7 +28,8 @@ from ._version import SDK_NAME, __version__
 from .config import Config
 from .export.base import Exporter
 from .export.processor import BatchProcessor
-from .privacy import ContentFormat
+from .fingerprint import Unfingerprintable
+from .privacy import ContentFormat, redact_error_message
 
 Status = Literal["ok", "error", "cancelled"]
 TOKEN_FIELDS = (
@@ -401,6 +402,10 @@ class Span:
             return
         try:
             self._fingerprint = fp.fingerprint(value)
+        except Unfingerprintable:
+            # No stable form (e.g. an object whose repr is its memory address): unknown, never wrong.
+            self._fingerprint = None
+            self._tracer.diag.inc("fingerprints_unavailable")
         except Exception as exc:
             self._tracer.diag.error("fingerprint", repr(exc)[:200], count="internal_errors")
 
@@ -506,9 +511,9 @@ class Span:
         else:
             block: dict[str, Any] = {"type": S.label(error), "origin": S.vocab(origin or _default_origin(self.kind))}
             if message is not None and self._tracer.policy.error_messages:
-                text, _ = S.scrub_secrets(S.clean_text(message))
+                text = redact_error_message(message)
                 if text:
-                    block["message"] = text[: S.MAX_ERROR_MESSAGE]
+                    block["message"] = text
             self._error = block
         if code is not None:
             self._error["code"] = S.label(code, S.MAX_SHORT_LABEL)

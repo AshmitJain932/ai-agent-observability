@@ -264,9 +264,10 @@ showing a blank.
 - `redacted` mode captures content after SDK-side redactors run (built-in patterns + user callables).
 - `full` mode captures content subject to size caps (default 32 KiB per field, flagged `truncated`).
 - Exception messages are captured by default (they are the most useful debugging signal) but they
-  can contain personal data, so they are always secret-scrubbed and can be turned off with
-  `capture_error_messages=False`. Stack traces are captured only with `capture_stack=True`. The
-  server's project ceiling applies to both.
+  can contain personal data, so secrets, e-mail addresses and card numbers are always removed from
+  them (by the SDK and again by the server) and they can be turned off with
+  `capture_error_messages=False`. Stack traces are captured only with `capture_stack_traces=True`.
+  The server's project ceiling applies to both.
 - Instrumentation cannot stop a developer from putting content into span **names** or
   **attributes**; the SDK docs say not to, and attribute values are size-limited and scrubbed.
 - Project policy on the server is a ceiling over whatever the SDK sends.

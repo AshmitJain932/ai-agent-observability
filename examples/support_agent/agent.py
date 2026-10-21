@@ -71,8 +71,12 @@ TOOL_FUNCTIONS = {"get_order_status": get_order_status, "issue_refund": issue_re
 SYSTEM_PROMPT = "You are a support agent. Use tools to look up orders and issue refunds when asked."
 
 
-def answer(client: Any, model: str, question: str, ticket_id: str, max_steps: int = 6) -> str:
-    """Run the agent loop: model -> tool calls -> model ... until the model answers in text."""
+def answer(
+    client: Any, model: str, question: str, ticket_id: str, max_steps: int = 6, tools: dict[str, Any] | None = None
+) -> str:
+    """Run the agent loop: model -> tool calls -> model ... until the model answers in text.
+    ``tools`` replaces the tool functions by name (e.g. a guarded ``issue_refund``)."""
+    functions = {**TOOL_FUNCTIONS, **(tools or {})}
     with aobs.run("answer_ticket", agent="support_agent", agent_version="1.0", session_id=ticket_id):  # aobs
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -86,6 +90,6 @@ def answer(client: Any, model: str, question: str, ticket_id: str, max_steps: in
             messages.append(message.model_dump(exclude_none=True))
             for call in message.tool_calls:
                 arguments = json.loads(call.function.arguments)
-                result = TOOL_FUNCTIONS[call.function.name](**arguments)
+                result = functions[call.function.name](**arguments)
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
         raise RuntimeError(f"no answer after {max_steps} steps")

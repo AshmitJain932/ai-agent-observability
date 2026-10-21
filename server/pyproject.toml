@@ -1,9 +1,20 @@
 [project]
 name = "aobs-server"
 version = "0.1.0.dev0"
-description = "aobs server: canonical event model, ingestion and query (Phase 1: pure model only)"
+description = "aobs server: canonical event model, ingestion and query"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.11,<3"]
+license = {text = "Apache-2.0"}
+dependencies = [
+  "pydantic>=2.11,<3",
+  "fastapi>=0.143,<1",
+  "uvicorn>=0.54,<1",
+  "sqlalchemy>=2.1,<2.2",
+  "alembic>=1.20,<2",
+  "psycopg[binary]>=3.3,<4",
+]
+
+[project.scripts]
+aobs-server = "aobs_server.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.25"]

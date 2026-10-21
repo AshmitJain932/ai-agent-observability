@@ -6,7 +6,10 @@ classes — without network access or credentials.
 
 Script: ask for ``get_order_status`` for the order id in the question; if the question mentions a
 refund, then ask for ``issue_refund``; then answer in text. Usage is reported like the real API,
-unless ``report_usage=False`` (to demonstrate unknown usage).
+unless ``report_usage=False`` (to demonstrate unknown usage). ``fail_status`` makes every call fail
+with that HTTP status, like a provider outage (the client raises its usual error class).
+
+Everything here is simulated: no model runs, and the recorded provider is ``mock_llm``.
 """
 
 from __future__ import annotations
@@ -34,8 +37,9 @@ def _usage(prompt: int, completion: int) -> dict[str, Any]:
 
 
 class ScriptedModel:
-    def __init__(self, report_usage: bool = True) -> None:
+    def __init__(self, report_usage: bool = True, fail_status: int | None = None) -> None:
         self.report_usage = report_usage
+        self.fail_status = fail_status
         self.calls = 0
 
     def respond(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -82,12 +86,18 @@ class ScriptedModel:
         }
 
     def handler(self, request: Any) -> Any:
+        if self.fail_status is not None:
+            self.calls += 1
+            error = {"message": "the scripted mock model is unavailable (simulated outage)", "type": "server_error"}
+            return httpx_mod.Response(
+                self.fail_status, json={"error": error}, headers={"x-request-id": f"req_mock_{self.calls}"}
+            )
         body = json.loads(request.content)
         return httpx_mod.Response(200, json=self.respond(body), headers={"x-request-id": f"req_mock_{self.calls}"})
 
 
-def mock_client(report_usage: bool = True) -> OpenAI:
-    model = ScriptedModel(report_usage=report_usage)
+def mock_client(report_usage: bool = True, fail_status: int | None = None) -> OpenAI:
+    model = ScriptedModel(report_usage=report_usage, fail_status=fail_status)
     return OpenAI(
         api_key="mock-key-not-used",
         base_url="http://mock-llm.invalid/v1",

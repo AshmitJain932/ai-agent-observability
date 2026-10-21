@@ -11,11 +11,16 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.11",
   "openai>=3.29,<4",  # tests of the openai_compat integration (SDK itself does not depend on it)
+  "httpx>=0.28",  # FastAPI TestClient in server tests
+  "playwright>=1.55,<2",  # dashboard browser tests (uses the Chromium installed by `playwright install chromium`)
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["server/tests", "sdk/python/tests"]
 addopts = "-ra --strict-markers"
+markers = [
+  "pg: needs a real PostgreSQL 16 (throwaway cluster or AOBS_TEST_DATABASE_URL); deselect with -m 'not pg'",
+]
 
 [tool.ruff]
 line-length = 120
@@ -31,4 +36,4 @@ plugins = ["pydantic.mypy"]
 mypy_path = ["server/src", "sdk/python/src"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["aobs", "aobs_server", "support", "sdk_support"]
+known-first-party = ["aobs", "aobs_server", "support", "sdk_support", "pg", "tenants", "ingest_support"]

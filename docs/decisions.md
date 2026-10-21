@@ -105,6 +105,57 @@ events rejected individually (counted by the SDK, never retried). 408/429/5xx = 
 (`Retry-After` in seconds honoured). Other 4xx = permanent failure. 3xx is never followed.
 **Consequence.** Phase 3 adds a contract test running the SDK's `HttpExporter` against the real API.
 
+## ADR-015 — Ingest semantics: per-event results, digest idempotency, per-trace locks · Accepted (2026-10-13)
+**Context.** `POST /v1/ingest` must be safe under SDK retries, out-of-order delivery and
+concurrent writers, without a queue (ADR-008) and without claiming exactly-once delivery.
+**Decision.**
+- **Validation.** An invalid envelope rejects the batch (400). Valid events are processed
+  individually: each gets exactly one of `accepted`, `duplicate`, `dropped` or `rejected`, still
+  with 200 (ADR-014).
+- **One transaction per batch.** Any database failure stores nothing (500/503), so the retry
+  starts clean.
+- **Idempotency is per event and content-based.** An event's key is (trace, span, start|end), or
+  the `event_id`. Its content is the SHA-256 of its post-privacy canonical JSON. The existing
+  `*_digests` columns record which copies were seen (lowest 16, always including the winner), so
+  no migration was needed and `batch_id` is informational only.
+- **Locking.** Every affected trace row is locked with one multi-row
+  `INSERT … ON CONFLICT DO UPDATE … RETURNING`, in trace-id order. Inserting first and then
+  `SELECT … FOR UPDATE` would lock new and existing rows in different orders and can deadlock
+  overlapping batches. All writes for a trace happen under its lock, and the summary is recomputed
+  from stored rows with the shared assembly code.
+- **Span event ids** are bound to the trace and span of their first stored copy; a copy naming
+  another trace is rejected (`event_id_conflict`).
+
+**Consequence.** Resending is harmless and the stored trace is independent of arrival order
+(tested by permutation and concurrency tests). The summary costs O(spans in trace) per batch,
+which is acceptable under the 10,000-span cap; it may move to incremental updates if measurements
+require it. A retry after a project's privacy settings changed is counted as a conflict rather
+than a duplicate.
+
+## ADR-016 — Trace reads: uniform 404, current policy on read, content opt-in · Accepted (2026-10-13)
+**Context.** Stored traces must be readable by project without revealing anything about other
+projects. Privacy settings can tighten after data was stored, and content is the most sensitive
+part of a trace.
+**Decision.**
+- **Endpoints.** `GET /v1/projects/{project_id}/traces/{trace_id}` and `…/events` need a
+  `read`-scoped key of that project (`auth.authorize`).
+- **One 404 for everything.** Another project (existing or not), a malformed id, an unknown trace
+  and a deleted trace all get the identical 404.
+- **Privacy on read.** Every read passes stored events through the project's *current* privacy
+  step (M4), so lowering the ceiling also hides older data. Content values and newer-minor fields
+  (`__extra__`) are returned only with `include_content=true`; status markers always.
+- **Consistent snapshots.** Each read runs in one `REPEATABLE READ`, read-only transaction, so
+  the summary and the spans agree.
+- **Pagination.** Spans are keyset-paginated by span id over the fully assembled trace (shared
+  assembly code). Span events are keyset-paginated by (time, event id) with an opaque cursor.
+
+**Consequence.**
+- No existence oracle across projects.
+- Tightening privacy is retroactive for reads, though not for already-stored rows, which a future
+  retention or rewrite job would handle.
+- Reading a page of a large trace costs one whole-trace assembly; an index-only span listing can
+  replace it if measurements require.
+
 ---
 
 ## Pending decisions

@@ -40,6 +40,7 @@ COUNTERS = (
     "invalid_cost_values",
     "content_truncated",
     "uninstrumented_calls",
+    "fingerprints_unavailable",
     "internal_errors",
     "config_warnings",
 )

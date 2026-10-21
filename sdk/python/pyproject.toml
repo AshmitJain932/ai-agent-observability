@@ -4,6 +4,7 @@ version = "0.1.0.dev0"
 description = "Vendor-neutral instrumentation SDK for AI agents (stdlib-only core)"
 readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
 dependencies = []   # deliberately none: the SDK must not conflict with the host application's dependencies
 
 [build-system]

@@ -107,41 +107,55 @@ class BatchProcessor:
 
     # ------------------------------------------------------------------ producer side (app threads)
 
-    def _admit_locked(self) -> bool:
+    def _admit_locked(self) -> str | None:
+        """None if the event may be queued, else why not. Only counts, never logs: the caller holds
+        ``self._lock``, and a logging handler may call back into the SDK, which takes the same
+        non-reentrant lock. Callers report a full queue after releasing it."""
         if self._shutdown:
             self._diag.inc("events_dropped_after_shutdown")
-            return False
+            return "shutdown"
         if len(self._events) + len(self._starts) >= self._max_queue:
-            self._diag.error("queue_full", "event queue full; dropping new events", count="events_dropped_queue_full")
-            return False
+            self._diag.inc("events_dropped_queue_full")
+            return "queue_full"
         if self._thread is None:
             self._thread = threading.Thread(target=self._run, name="aobs-exporter", daemon=True)
             self._thread.start()
-        return True
+        return None
+
+    def _report_refusal(self, refused: str | None) -> None:
+        """Warn about a dropped event. Must be called without holding ``self._lock``."""
+        if refused == "queue_full":
+            self._diag.error("queue_full", "event queue full; dropping new events")
 
     def on_start(self, key: SpanKey, event: Event) -> None:
         with self._lock:
-            if self._admit_locked():
+            refused = self._admit_locked()
+            if refused is None:
                 self._starts[key] = (time.monotonic(), event)
                 self._diag.inc("events_enqueued")
+        self._report_refusal(refused)
 
     def on_end(self, key: SpanKey, event: Event) -> None:
         with self._lock:
             if self._starts.pop(key, None) is not None:
                 self._diag.inc("starts_coalesced")
-            if self._admit_locked():
+            refused = self._admit_locked()
+            if refused is None:
                 self._events.append(event)
                 self._diag.inc("events_enqueued")
                 if len(self._events) >= self._max_events:
                     self._cond.notify()
+        self._report_refusal(refused)
 
     def on_event(self, event: Event) -> None:
         with self._lock:
-            if self._admit_locked():
+            refused = self._admit_locked()
+            if refused is None:
                 self._events.append(event)
                 self._diag.inc("events_enqueued")
                 if len(self._events) >= self._max_events:
                     self._cond.notify()
+        self._report_refusal(refused)
 
     def defer(self, callback: Callable[[], None]) -> None:
         """Run ``callback`` later on the worker thread. Safe to call from ``__del__``."""

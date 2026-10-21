@@ -1,0 +1,23 @@
+# Reliability requirements for the example support agent (examples/support_agent).
+#   uv run aobs-server gate --policy examples/diagnose/gate/support_agent.toml examples/diagnose/compare/refund_ok.jsonl
+# See docs/reliability-gate.md for every setting.
+version = 1
+
+[gate]
+task = "answer_ticket"
+on_missing_data = "fail"
+
+[run]
+require_success = true
+require_complete = true
+max_duration_ms = 10000
+max_llm_calls = 6
+max_tool_calls = 4
+max_retries = 0
+max_redundant_calls = 0
+max_input_tokens = 4000
+required_tools = ["get_order_status"]
+
+[run.tools.issue_refund]
+max_calls = 1
+max_failures = 0

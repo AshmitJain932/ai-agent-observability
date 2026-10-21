@@ -1,0 +1,12 @@
+# Action-safety policy for the example support agent (aobs.safety; the rules are described in
+# sdk/python/src/aobs/safety.py). Anything not listed here is denied.
+version = 1
+
+[actions.issue_refund]
+required_evidence = ["order_id", "amount", "status"]  # from the order system, never from the model
+must_match = ["order_id"]                             # the refund must be for the verified order
+amount = "amount"
+amount_at_most_evidence = true                        # never more than the order's amount
+max_amount = "200.00"                                 # DENY above this
+approval_above = "100.00"                             # a human approves above this
+once_per = ["order_id"]                               # one refund per order (duplicate check)
