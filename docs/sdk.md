@@ -35,6 +35,9 @@ Every model call and tool call inside the `with` block becomes a child span of t
 `flush` happens automatically at interpreter exit; call `aobs.shutdown()` yourself in scripts
 and short-lived jobs (serverless) so you control the wait.
 
+To guard side-effecting tools (refunds, payments) with policy checks, approval and duplicate
+prevention, see [action-safety.md](action-safety.md).
+
 To store runs in the collector, pass `endpoint=` and `api_key=` (or set `AOBS_ENDPOINT` and
 `AOBS_API_KEY`); see [ingestion.md](ingestion.md). Without a collector, use
 `exporter=JsonlFileExporter("traces.jsonl")` (see the example agent) or your own exporter.
