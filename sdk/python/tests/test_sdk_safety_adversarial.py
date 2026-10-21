@@ -307,6 +307,17 @@ PAUSED_CHILD = textwrap.dedent(
 ) % json.dumps(RULE).replace("true", "True")
 
 
+def readline(stream: Any, timeout: float = 60.0) -> str:
+    """One line from a child's pipe, or a test failure (not a hang) if none comes in time."""
+    line: list[str] = []
+    reader = threading.Thread(target=lambda: line.append(stream.readline()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+    if not line:
+        raise AssertionError(f"the child process wrote no line within {timeout:g}s")
+    return line[0]
+
+
 @pytest.mark.parametrize(("keymode", "refunds"), [("idempotent", 1), ("ignores-keys", 2)])
 def test_a_really_paused_process_resumes_after_a_takeover(tmp_path: Path, keymode: str, refunds: int) -> None:
     store_path, ledger = tmp_path / "actions.db", tmp_path / "ledger.db"
@@ -321,7 +332,7 @@ def test_a_really_paused_process_resumes_after_a_takeover(tmp_path: Path, keymod
         env={**os.environ, "T_STORE": SECRET.hex(), "T_IDEM": IDEM_SECRET.hex()},
     )  # fmt: skip
     try:
-        assert child.stdout is not None and child.stdout.readline().strip() == "ready"
+        assert child.stdout is not None and readline(child.stdout).strip() == "ready"
         later = Clock(time.time() + 3600)  # the operator looks after stale_after_s, without waiting for it
         operator = guard(sqlite(store_path), clock=later)
         stale = operator.reconcile("issue_refund", KEY, verify=lambda c: "NOT_FOUND")
@@ -360,7 +371,7 @@ def test_operators_reconciling_at_the_same_moment_apply_one_change(tmp_path: Pat
 
     def execute(ctx: safety.ActionContext) -> str:
         clock.now += 3600
-        barrier = threading.Barrier(4)
+        barrier = threading.Barrier(4, timeout=60)
 
         def operator() -> None:
             g = guard(sqlite(path), clock=clock)
@@ -422,7 +433,7 @@ def test_stores_created_at_the_same_moment(tmp_path: Path, same_secret: bool) ->
     other = SECRET if same_secret else bytes(range(100, 132))
     expected = ["opened", "opened"] if same_secret else ["opened", "refused: the secret does not match"]
     for round_ in range(60):  # the race used to fail about 1 in 20 rounds with "database is locked"
-        path, barrier, results = tmp_path / f"a{round_}.db", threading.Barrier(2), []
+        path, barrier, results = tmp_path / f"a{round_}.db", threading.Barrier(2, timeout=60), []
 
         def open_with(
             secret: bytes, path: Path = path, barrier: threading.Barrier = barrier, results: list[str] = results
