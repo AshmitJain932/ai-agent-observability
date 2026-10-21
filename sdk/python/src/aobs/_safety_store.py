@@ -423,11 +423,16 @@ class SqliteActionStore:
             raise StoreConfigurationError(f"{self.path}: is not a regular file")
         if os.name != "posix":
             return None
-        shared = [
-            f.name
-            for f in (self.path, Path(f"{self.path}-wal"), Path(f"{self.path}-shm"))
-            if f.exists() and stat.S_IMODE(f.lstat().st_mode) & 0o077
-        ]
+        shared = []
+        for f in (self.path, Path(f"{self.path}-wal"), Path(f"{self.path}-shm")):
+            try:
+                mode = f.lstat().st_mode
+            except FileNotFoundError:
+                # SQLite removes -wal and -shm when another connection to the store closes, which
+                # can happen between any check and this call: a missing file shares nothing.
+                continue
+            if stat.S_IMODE(mode) & 0o077:
+                shared.append(f.name)
         if shared:
             warnings.warn(
                 f"{self.path}: {', '.join(shared)} can be read or written by other users; the action store is not "
