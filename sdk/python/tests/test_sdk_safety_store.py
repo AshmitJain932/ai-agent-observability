@@ -160,7 +160,7 @@ def test_the_unique_index_backs_the_once_per_rule(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("same_key", [True, False])
 def test_threads_with_their_own_guards_and_store_objects_run_the_action_once(tmp_path: Path, same_key: bool) -> None:
-    path, barrier, executed = tmp_path / "actions.db", threading.Barrier(8), []
+    path, barrier, executed = tmp_path / "actions.db", threading.Barrier(8, timeout=60), []
     sqlite(path)  # created before the race
 
     def execute(ctx: safety.ActionContext) -> str:
@@ -453,6 +453,24 @@ def test_store_files_are_private_and_deleted_records_are_overwritten(tmp_path: P
                 assert stat.S_IMODE((tmp_path / name).stat().st_mode) & 0o077 == 0, name
     finally:
         os.umask(previous)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+def test_a_wal_file_removed_while_the_store_opens_is_not_an_error(tmp_path: Path, monkeypatch: Any) -> None:
+    sqlite(tmp_path / "actions.db")
+    with closing(sqlite3.connect(tmp_path / "actions.db")) as db:
+        db.execute("SELECT count(*) FROM sqlite_master").fetchone()  # -wal and -shm exist while it is open
+        assert (tmp_path / "actions.db-wal").exists() and (tmp_path / "actions.db-shm").exists()
+        real_lstat = Path.lstat
+
+        def lstat(self: Path) -> os.stat_result:
+            # another connection closing at this moment: SQLite has just removed the file
+            if self.name.endswith(("-wal", "-shm")):
+                raise FileNotFoundError(self)
+            return real_lstat(self)
+
+        monkeypatch.setattr(Path, "lstat", lstat)
+        assert sqlite(tmp_path / "actions.db").private is True
 
 
 def test_a_released_reservation_leaves_no_digest_in_the_files(tmp_path: Path) -> None:
