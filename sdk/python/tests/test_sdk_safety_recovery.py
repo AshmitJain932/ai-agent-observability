@@ -606,7 +606,7 @@ def test_failing_telemetry_does_not_weaken_durable_enforcement(
 
 
 def test_the_guard_is_thread_safe_with_one_shared_key() -> None:
-    guard, barrier, execute_calls = Guard(POLICY), threading.Barrier(8), []
+    guard, barrier, execute_calls = Guard(POLICY), threading.Barrier(8, timeout=60), []
 
     def execute(ctx: safety.ActionContext) -> str:
         execute_calls.append(ctx.action_id)
