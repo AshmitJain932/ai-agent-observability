@@ -1,0 +1,114 @@
+# Documentation site, built from docs/ with MkDocs + Material and published to GitHub Pages by
+# .github/workflows/docs.yml. Local preview:
+#   uv run --group docs mkdocs serve
+#   uv run --group docs mkdocs build --strict     # what CI runs
+site_name: aobs — observability for AI agents
+site_description: >-
+  Vendor-neutral tracing for AI agents, a reliability gate for CI, and an action-safety layer for
+  tools with side effects.
+site_url: https://ashmitjain932.github.io/ai-agent-observability/
+repo_url: https://github.com/AshmitJain932/ai-agent-observability
+repo_name: AshmitJain932/ai-agent-observability
+edit_uri: edit/master/docs/
+copyright: Apache License 2.0
+
+theme:
+  name: material
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      # GitHub-style heading ids, so the same #anchors work on github.com and on the site.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+# Links inside docs/ are checked strictly (a broken page link or #anchor fails `--strict`).
+# Pages are allowed to exist without a nav entry (reported as info only), and a nav entry whose
+# page does not exist yet does not fail the build either, so docs added on other branches can be
+# merged before or after their nav line.
+validation:
+  nav:
+    omitted_files: info
+    not_found: info
+    absolute_links: warn
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: warn
+    unrecognized_links: warn
+
+# Pages expected from other branches; listed so they never warn while they are not in the nav.
+not_in_nav: |
+  /integrations/*.md
+  /opentelemetry.md
+  /docker.md
+  /github-action.md
+
+nav:
+  - Getting started:
+      - Overview: index.md
+      - Quick start: getting-started.md
+      - End-to-end workflow: agent-workflow.md
+      # TODO(lead): add "Docker: docker.md" here once docs/docker.md is merged.
+  - Guides:
+      - Python SDK: sdk.md
+      - Integrations:
+          - Anthropic: integrations/anthropic.md
+          - LangChain / LangGraph: integrations/langchain.md
+      - Action safety: action-safety.md
+      - Reliability gate: reliability-gate.md
+      # TODO(lead): add "GitHub Action: github-action.md" here once docs/github-action.md is merged.
+      - Analyzing stored traces: stored-analysis.md
+      - Dashboard: dashboard.md
+  - Reference:
+      - Event model: event-model.md
+      - Traces API: traces-api.md
+      - Ingestion API: ingestion.md
+      - OpenTelemetry export: opentelemetry.md
+  - Project:
+      - Architecture: architecture.md
+      - Decisions: decisions.md
+      - Roadmap: roadmap.md
+      - Benchmarks: benchmarks.md
+      - Releasing: releasing.md
+      - Reviews:
+          - Pre-Phase-1 review: reviews/2026-10-12-pre-phase-1-review.md

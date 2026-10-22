@@ -12,7 +12,8 @@ import aobs
 
 PROBE = """
 import json, sys, sysconfig
-import aobs, aobs.export, aobs.integrations.openai_compat, aobs.privacy, aobs.fingerprint
+import aobs, aobs.export, aobs.privacy, aobs.fingerprint
+import aobs.integrations.anthropic, aobs.integrations.langchain, aobs.integrations.openai_compat
 import aobs.export.otlp, aobs.export.fanout
 stdlib = {sysconfig.get_paths()["stdlib"], sysconfig.get_paths()["platstdlib"]}
 mods = {}

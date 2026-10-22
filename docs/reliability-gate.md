@@ -189,7 +189,7 @@ needed; a file that cannot be written is exit code 1.
 
 ## In CI
 
-**GitHub Actions:** [`examples/ci/github-actions-agent-gate.yml`](../examples/ci/github-actions-agent-gate.yml)
+**GitHub Actions:** [`examples/ci/github-actions-agent-gate.yml`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/ci/github-actions-agent-gate.yml)
 is a complete workflow to copy to `.github/workflows/`. It records runs, gates them, writes the
 job summary and keeps the JUnit report and traces as an artifact. Its core:
 

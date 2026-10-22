@@ -246,6 +246,53 @@ Capabilities declared in the batch `resource`: `llm.usage`, `llm.streaming`,
 Not instrumented: `with_raw_response`, `with_streaming_response`, other endpoints (Responses API,
 embeddings). Not recorded: cost (not reported by Chat Completions), headers, API keys.
 
+### `aobs.integrations.langchain`
+
+`CallbackHandler()` is a LangChain callback handler: pass it as `config={"callbacks": [handler]}`
+to `graph.invoke(...)` / `ainvoke` / `stream` and LangGraph nodes, chains, chat model calls,
+tools and retrievers become nested `agent` / `step` / `llm` / `tool` / `retrieval` spans, with
+usage only when LangChain reports it. `langchain-core` is imported lazily. Tested with
+`langchain-core` 1.6.13 and `langgraph` 1.2.16 using LangChain's fake chat models. See
+[integrations/langchain.md](integrations/langchain.md) and the offline example
+[examples/langgraph_agent](../examples/langgraph_agent/README.md).
+
+### `aobs.integrations.anthropic`
+
+`wrap(client, provider=None)` instruments `client.messages.create` (streaming and not),
+`client.messages.stream(...)` and `client.messages.parse(...)` on `Anthropic` / `AsyncAnthropic`
+clients. **Tested with `anthropic` 2.1.0** through a mocked HTTP transport, not against the real
+API. Usage is mapped so that `input_tokens` includes cache reads and writes (Anthropic reports
+them separately); `cache_creation_input_tokens` → `cache_write_input_tokens`,
+`output_tokens_details.thinking_tokens` → `reasoning_tokens`; `total_tokens` stays unknown.
+`tool_use` / `tool_result` blocks become `tool_call` / `tool_call_response` content parts. Details,
+including streaming and error mapping: [integrations/anthropic.md](integrations/anthropic.md).
+
+## Live smoke tests
+
+`sdk/python/tests/live/` holds one tiny real call per integration (`openai_compat`, `anthropic`)
+that checks the recorded span carries provider-reported usage and the requested model. They are
+**skipped** unless you opt in, so the default `pytest` run and CI never contact a provider; the
+skip reason is printed in the summary. **They have not been run by CI**, and whoever runs them
+pays for the calls.
+
+| Variable | Needed for |
+|---|---|
+| `AOBS_LIVE_TESTS=1` | both (the opt-in) |
+| `OPENAI_API_KEY`, `AOBS_LIVE_OPENAI_MODEL` | `test_live_openai_compat` |
+| `ANTHROPIC_API_KEY`, `AOBS_LIVE_ANTHROPIC_MODEL` | `test_live_anthropic` |
+
+There is no default model: a test whose model variable is unset is skipped. Pick a cheap model
+your account can use. Each call asks for at most 64 output tokens.
+
+```bash
+AOBS_LIVE_TESTS=1 ANTHROPIC_API_KEY=... AOBS_LIVE_ANTHROPIC_MODEL=<model> \
+OPENAI_API_KEY=... AOBS_LIVE_OPENAI_MODEL=<model> \
+  uv run pytest sdk/python/tests/live -v -rs
+```
+
+The clients read their usual environment (`OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, …), so unset
+those unless you mean to test against them.
+
 ## Known limitations (Phase 2)
 
 * Python only; no cross-process trace propagation helpers (W3C `traceparent`) yet.
