@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a new capability or a change to an existing one.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [roadmap](https://github.com/AshmitJain932/ai-agent-observability/blob/master/docs/roadmap.md)
+        first: many features are already planned for a later phase.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what stops you today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would like to happen. Commands, API sketches or policy snippets help.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use now, or other designs you thought about.
+  - type: textarea
+    id: safety
+    attributes:
+      label: Privacy and safety impact
+      description: >-
+        Would this record more content, change what is stored or shown, cross a project boundary, or
+        change when a guarded action may run? Say so, even if you are not sure.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to work on this (see CONTRIBUTING.md).
