@@ -13,6 +13,7 @@ dev = [
   "openai>=3.29,<4",  # tests of the openai_compat integration (SDK itself does not depend on it)
   "httpx>=0.28",  # FastAPI TestClient in server tests
   "playwright>=1.55,<2",  # dashboard browser tests (uses the Chromium installed by `playwright install chromium`)
+  "opentelemetry-proto>=1.27,<2",  # OTLP conformance checks in the OTLP exporter tests (the SDK itself stays stdlib-only)
 ]
 
 [tool.pytest.ini_options]
