@@ -76,19 +76,12 @@ validation:
     absolute_links: warn
     unrecognized_links: warn
 
-# Pages expected from other branches; listed so they never warn while they are not in the nav.
-not_in_nav: |
-  /integrations/*.md
-  /opentelemetry.md
-  /docker.md
-  /github-action.md
-
 nav:
   - Getting started:
       - Overview: index.md
       - Quick start: getting-started.md
       - End-to-end workflow: agent-workflow.md
-      # TODO(lead): add "Docker: docker.md" here once docs/docker.md is merged.
+      - Docker demo: docker.md
   - Guides:
       - Python SDK: sdk.md
       - Integrations:

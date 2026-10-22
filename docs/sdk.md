@@ -255,7 +255,7 @@ tools and retrievers become nested `agent` / `step` / `llm` / `tool` / `retrieva
 usage only when LangChain reports it. `langchain-core` is imported lazily. Tested with
 `langchain-core` 1.6.13 and `langgraph` 1.2.16 using LangChain's fake chat models. See
 [integrations/langchain.md](integrations/langchain.md) and the offline example
-[examples/langgraph_agent](../examples/langgraph_agent/README.md).
+[examples/langgraph_agent](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/langgraph_agent/README.md).
 
 ### `aobs.integrations.anthropic`
 
