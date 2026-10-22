@@ -1,47 +1,58 @@
-# aobs — vendor-neutral observability for AI agents
+# aobs — observability and action safety for AI agents
 
-> Working name. Status: **Phase 2 complete; Phase 3 in progress** — canonical event model, a
-> working Python SDK with an example agent, offline diagnosis and regression tools, a first
-> read-only dashboard over saved trace files, and an authenticated ingestion API that stores runs
-> in PostgreSQL, with a read API for one stored trace by id. There is no run list yet, and the
-> dashboard does not show stored runs (Phase 4). Not production-hardened: no rate limiting, retention job or TLS of its own.
+[![CI](https://github.com/AshmitJain932/ai-agent-observability/actions/workflows/ci.yml/badge.svg)](https://github.com/AshmitJain932/ai-agent-observability/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)
+![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
-Records what an AI agent did — model calls, tool calls, sub-agents, errors, latency, tokens and
-cost — as nested traces, regardless of framework or model provider.
+**See what your agent did, catch regressions in CI, and stop it from doing the same risky thing twice.**
 
-## What works today
+![The same refund is requested three times, once after a restart; the refund tool runs once](docs/assets/safety-demo.gif)
 
-| Component | Location | Status |
-|---|---|---|
-| Wire schema v1.0 (normative JSON Schema) + 57 conformance fixtures | `schema/` | Done |
-| Strict parsing, validation, version policy, merge, trace assembly | `server/src/aobs_server/model/` | Done (library only) |
-| Python SDK `aobs` (stdlib only) | `sdk/python/` | Done — see [docs/sdk.md](docs/sdk.md) |
-| OpenAI-compatible integration (sync/async/streaming) | `aobs.integrations.openai_compat` | Done — tested with `openai` 3.29.0 |
-| Example tool-calling agent, mock and live modes | `examples/support_agent/` | Done |
-| Overhead benchmark + recorded baseline | `sdk/python/benchmarks/`, [docs/benchmarks.md](docs/benchmarks.md) | Done |
-| Offline trace diagnosis (`aobs-server analyze`): deterministic rules, evidence, suggestions | `server/src/aobs_server/diagnosis/`, [examples/diagnose](examples/diagnose/README.md) | Demo (no server or database needed) |
-| Cross-run regression detection (`aobs-server compare`): new failures, slowdowns, retries, tool/model/token/cost changes | `server/src/aobs_server/diagnosis/compare.py`, [examples/diagnose](examples/diagnose/README.md#demo-compare-runs-and-find-regressions) | Demo (no server or database needed) |
-| Web dashboard (`aobs-server dashboard`): overview, runs explorer, run details with diagnosis, two-run and group comparison, over sample data, local trace files or a project's stored traces | `server/src/aobs_server/dashboard/`, [docs/dashboard.md](docs/dashboard.md) | First version |
-| Repeated-run regression analysis (`aobs-server compare-groups`): medians, variation, exact rank / Fisher tests with Holm correction, honest "insufficient data" | `server/src/aobs_server/diagnosis/repeated.py`, `stats.py`, [examples/diagnose](examples/diagnose/README.md#demo-repeated-runs-with-statistics) | Demo (no server or database needed) |
-| Reliability gate (`aobs-server gate`): requirements in a TOML policy (outcome, completeness, duration, calls, retries, tokens, cost, tools, pass rate, baseline limits) → PASS/FAIL with evidence, exit code 3 on FAIL; JUnit XML and Markdown reports for CI (`--junit`, `--markdown`), GitHub Actions template | `server/src/aobs_server/diagnosis/gate.py`, [docs/reliability-gate.md](docs/reliability-gate.md) | First version (no server or database needed) |
-| Server foundations: PostgreSQL schema + migrations, API keys, authorization, ingest privacy step | `server/src/aobs_server/` | Done (Phase 3) |
-| Ingestion API (`aobs-server serve`, `POST /v1/ingest`): API-key auth, privacy before storage, retry-safe idempotent merge, per-trace locking, trace summaries | `server/src/aobs_server/api/`, `ingest/`, `storage/traces.py`, [docs/ingestion.md](docs/ingestion.md) | First version (Phase 3; no rate limiting or retention job yet) |
-| Trace read API (`GET /v1/projects/{id}/traces/{trace_id}`, `…/events`): read-scoped keys, uniform 404 across projects, content opt-in under the project's current privacy settings, pagination | `server/src/aobs_server/query/`, [docs/traces-api.md](docs/traces-api.md) | First version (Phase 3; no run list or search yet) |
-| Analysis of stored traces: `db:` selections for `analyze`, `compare`, `compare-groups`, `gate`; `traces list`; a *Stored traces* dashboard dataset (`--project`) | `server/src/aobs_server/diagnosis/stored.py`, [docs/stored-analysis.md](docs/stored-analysis.md) | First version (CLI and dashboard read PostgreSQL directly) |
-| Action safety (`aobs.safety`): policy checks against trusted evidence before a side effect, approval, duplicate prevention, durable SQLite store, recovery without blind retries, provider idempotency keys | `sdk/python/src/aobs/safety.py`, [docs/action-safety.md](docs/action-safety.md) | First version (one host; not exactly-once: see its guarantees) |
-| HTTP query API (run list, search, analysis over read-scoped keys) | — | Phase 4 |
+*Real output of [`examples/support_agent/protect_example.py`](examples/support_agent/protect_example.py):
+the customer asks for the same refund three times (the last time after a restart) and the refund
+tool runs once.*
+
+- **Trace every run.** Model calls, tool calls, sub-agents, errors, latency and tokens as nested
+  traces. A standard-library-only Python SDK, with integrations for OpenAI-compatible clients,
+  Anthropic and LangChain / LangGraph, and export to OpenTelemetry backends.
+- **Explain and compare runs.** Deterministic diagnosis (errors, retry storms, wasted calls,
+  bottlenecks) with evidence, regression detection between runs, and statistics over repeated runs.
+- **Gate agents in CI.** Write requirements in a TOML policy; the gate answers PASS or FAIL with the
+  spans that prove it, writes JUnit and Markdown reports, and ships as a
+  [GitHub Action](docs/github-action.md).
+- **Guard risky actions.** [`aobs.safety`](docs/action-safety.md) checks refunds, emails, deletes
+  and deploys against trusted evidence before they run, asks for approval above a threshold, and
+  prevents duplicates across retries and restarts. It is not exactly-once; its guarantees are
+  stated.
+
+> **Status: alpha** (`0.1.0.dev0`), not on PyPI yet: install from a clone. Not production-hardened:
+> the collector has no rate limiting, retention job or TLS of its own. Integrations are tested
+> against the real client libraries with mocked HTTP, not yet against live provider APIs.
+
+## See it in 60 seconds
+
+With Docker, from a clone of this repository:
+
+```bash
+docker compose up
+```
+
+Open <http://localhost:8800/#token=aobs-demo-token> and choose **Stored traces**: PostgreSQL, the
+collector and the dashboard are running locally with 73 sample runs. The credentials are demo
+values for your own machine only; see [docs/docker.md](docs/docker.md).
 
 ## Quick start: your own agent
 
-Requires Python ≥ 3.11. Not on PyPI yet: install from a clone of this repository.
+Requires Python ≥ 3.11.
 
 ```bash
 git clone https://github.com/AshmitJain932/ai-agent-observability.git
 pip install ./ai-agent-observability/sdk/python ./ai-agent-observability/server
 ```
 
-Record what your agent does (the SDK has no dependencies; nothing leaves your machine with a file
-exporter):
+Record what your agent does (`agent.py`; the SDK has no dependencies, and nothing leaves your
+machine with a file exporter):
 
 ```python
 import aobs
@@ -56,21 +67,112 @@ def lookup_order(order_id: str) -> dict:
 
 
 with aobs.run("answer_ticket", session_id="ticket-1"):
-    lookup_order("1042")  # model calls: wrap your client with aobs.integrations.openai_compat.wrap(...)
+    lookup_order("1042")  # model calls: wrap your client, see "Integrations" below
 
 aobs.shutdown()
 ```
 
-Then explain the run, and check it against written requirements (exit code 3 on FAIL, for CI):
+Explain the run:
 
 ```bash
+python agent.py
 aobs-server analyze traces.jsonl
-aobs-server gate --policy ai-agent-observability/examples/diagnose/gate/support_agent.toml traces.jsonl
 ```
 
-Next: [docs/sdk.md](docs/sdk.md) (SDK and model-client integration),
-[docs/reliability-gate.md](docs/reliability-gate.md) (writing a policy) and
-[docs/action-safety.md](docs/action-safety.md) (guarding refunds, payments and other side effects).
+Then write down what a good run looks like, `policy.toml`:
+
+```toml
+version = 1
+
+[gate]
+task = "answer_ticket"           # check runs whose root span has this name
+
+[run]
+require_success = true
+require_complete = true          # every span ended
+max_duration_ms = 10000
+max_tool_calls = 4
+required_tools = ["lookup_order"]
+```
+
+and check the run against it (exit code 0 on PASS, 3 on FAIL, so CI can block a regression):
+
+```bash
+aobs-server gate --policy policy.toml traces.jsonl
+```
+
+Next: [docs/getting-started.md](docs/getting-started.md), the [SDK guide](docs/sdk.md), the
+[reliability gate](docs/reliability-gate.md) and [action safety](docs/action-safety.md).
+
+## Integrations
+
+| | How | Docs |
+|---|---|---|
+| OpenAI and OpenAI-compatible Chat Completions (sync, async, streaming) | `aobs.integrations.openai_compat.wrap(client)` | [sdk.md](docs/sdk.md) |
+| Anthropic Messages API (sync, async, streaming, `messages.stream`) | `aobs.integrations.anthropic.wrap(client)` | [integrations/anthropic.md](docs/integrations/anthropic.md) |
+| LangChain / LangGraph (graphs, nodes, chat models, tools, retrievers) | `config={"callbacks": [aobs.integrations.langchain.CallbackHandler()]}` | [integrations/langchain.md](docs/integrations/langchain.md) |
+| OpenTelemetry backends (Jaeger, Tempo, Honeycomb, Datadog via the Collector) | `aobs.export.OtlpHttpExporter(...)` | [opentelemetry.md](docs/opentelemetry.md) |
+| Any language | `POST /v1/ingest` on the collector | [ingestion.md](docs/ingestion.md) |
+| GitHub Actions | `uses: AshmitJain932/ai-agent-observability/actions/gate@<commit-sha>` | [github-action.md](docs/github-action.md) |
+
+Tested with the real client libraries (`openai` 3.29.0, `anthropic` 2.1.0, `langchain-core` 1.6.13,
+`langgraph` 1.2.16) against mocked HTTP or fake models, and OTLP payloads checked with
+`opentelemetry-proto`. Opt-in live tests against the real provider APIs exist
+([docs/sdk.md](docs/sdk.md#live-smoke-tests)) but are not run by CI.
+
+## Guard a risky tool
+
+Wrap the existing tool; the tool and the agent loop do not change. Evidence comes from your system
+of record, not from the model:
+
+```python
+from aobs import safety
+
+guard = safety.ActionGuard(
+    safety.load_policy("safety_policy.toml"),
+    store=safety.SqliteActionStore("actions.db", secret=STORE_SECRET),
+    idempotency=safety.IdempotencyKeys(namespace="support-agent", secret=IDEMPOTENCY_SECRET),
+)
+issue_refund = guard.protect(
+    issue_refund,                                          # your existing tool
+    action="issue_refund",
+    evidence=lambda: orders.get_status(ticket.order_id),  # trusted record
+    action_key=f"refund:{ticket.id}",                     # one refund per ticket
+)
+```
+
+Recipes with runnable, offline examples: [refunds](examples/support_agent/protect_example.py),
+[emails, record deletion and deploys](examples/safety_recipes/README.md). Guarantees and limits:
+[docs/action-safety.md](docs/action-safety.md).
+
+## What works today
+
+| Component | Location | Status |
+|---|---|---|
+| Wire schema v1.0 (normative JSON Schema) + 57 conformance fixtures | `schema/` | Done |
+| Strict parsing, validation, version policy, merge, trace assembly | `server/src/aobs_server/model/` | Done (library only) |
+| Python SDK `aobs` (stdlib only) | `sdk/python/` | Done — see [docs/sdk.md](docs/sdk.md) |
+| OpenAI-compatible integration (sync/async/streaming) | `aobs.integrations.openai_compat` | Done — tested with `openai` 3.29.0 |
+| Anthropic Messages API integration (sync/async/streaming) | `aobs.integrations.anthropic`, [docs](docs/integrations/anthropic.md) | First version — tested with `anthropic` 2.1.0 over mocked HTTP |
+| LangChain / LangGraph callback handler | `aobs.integrations.langchain`, [docs](docs/integrations/langchain.md), [example](examples/langgraph_agent/README.md) | First version — tested with `langchain-core` 1.6.13 and `langgraph` 1.2.16, fake models |
+| OpenTelemetry export (OTLP/HTTP JSON, GenAI conventions) and fan-out to several exporters | `aobs.export.OtlpHttpExporter`, `FanOutExporter`, [docs](docs/opentelemetry.md) | First version — payloads checked with `opentelemetry-proto`; not run against a live backend |
+| Example tool-calling agent, mock and live modes | `examples/support_agent/` | Done |
+| Overhead benchmark + recorded baseline | `sdk/python/benchmarks/`, [docs/benchmarks.md](docs/benchmarks.md) | Done |
+| Offline trace diagnosis (`aobs-server analyze`): deterministic rules, evidence, suggestions | `server/src/aobs_server/diagnosis/`, [examples/diagnose](examples/diagnose/README.md) | Demo (no server or database needed) |
+| Cross-run regression detection (`aobs-server compare`): new failures, slowdowns, retries, tool/model/token/cost changes | `server/src/aobs_server/diagnosis/compare.py`, [examples/diagnose](examples/diagnose/README.md#demo-compare-runs-and-find-regressions) | Demo (no server or database needed) |
+| Web dashboard (`aobs-server dashboard`): overview, runs explorer, run details with diagnosis, two-run and group comparison, over sample data, local trace files or a project's stored traces | `server/src/aobs_server/dashboard/`, [docs/dashboard.md](docs/dashboard.md) | First version |
+| Repeated-run regression analysis (`aobs-server compare-groups`): medians, variation, exact rank / Fisher tests with Holm correction, honest "insufficient data" | `server/src/aobs_server/diagnosis/repeated.py`, `stats.py`, [examples/diagnose](examples/diagnose/README.md#demo-repeated-runs-with-statistics) | Demo (no server or database needed) |
+| Reliability gate (`aobs-server gate`): requirements in a TOML policy (outcome, completeness, duration, calls, retries, tokens, cost, tools, pass rate, baseline limits) → PASS/FAIL with evidence, exit code 3 on FAIL; JUnit XML and Markdown reports for CI (`--junit`, `--markdown`), GitHub Actions template | `server/src/aobs_server/diagnosis/gate.py`, [docs/reliability-gate.md](docs/reliability-gate.md) | First version (no server or database needed) |
+| Reliability gate GitHub Action: job summary, JUnit, optional sticky PR comment | `actions/gate/`, [docs/github-action.md](docs/github-action.md) | First version — self-tested on every change |
+| Server foundations: PostgreSQL schema + migrations, API keys, authorization, ingest privacy step | `server/src/aobs_server/` | Done (Phase 3) |
+| Ingestion API (`aobs-server serve`, `POST /v1/ingest`): API-key auth, privacy before storage, retry-safe idempotent merge, per-trace locking, trace summaries | `server/src/aobs_server/api/`, `ingest/`, `storage/traces.py`, [docs/ingestion.md](docs/ingestion.md) | First version (Phase 3; no rate limiting or retention job yet) |
+| Trace read API (`GET /v1/projects/{id}/traces/{trace_id}`, `…/events`): read-scoped keys, uniform 404 across projects, content opt-in under the project's current privacy settings, pagination | `server/src/aobs_server/query/`, [docs/traces-api.md](docs/traces-api.md) | First version (Phase 3; no run list or search yet) |
+| Analysis of stored traces: `db:` selections for `analyze`, `compare`, `compare-groups`, `gate`; `traces list`; a *Stored traces* dashboard dataset (`--project`) | `server/src/aobs_server/diagnosis/stored.py`, [docs/stored-analysis.md](docs/stored-analysis.md) | First version (CLI and dashboard read PostgreSQL directly) |
+| Action safety (`aobs.safety`): policy checks against trusted evidence before a side effect, approval, duplicate prevention, durable SQLite store, recovery without blind retries, provider idempotency keys | `sdk/python/src/aobs/safety.py`, [docs/action-safety.md](docs/action-safety.md) | First version (one host; not exactly-once: see its guarantees) |
+| Action-safety recipes: emails, record deletion, deploys | [examples/safety_recipes](examples/safety_recipes/README.md) | Offline examples with tests |
+| One-command local demo (`docker compose up`): PostgreSQL, collector, dashboard, 73 sample runs | `Dockerfile`, `compose.yaml`, [docs/docker.md](docs/docker.md) | First version — built and started by CI on every change |
+| HTTP query API (run list, search, analysis over read-scoped keys) | — | Phase 4 |
+
 
 ## Try it
 
@@ -176,46 +278,62 @@ Selections, isolation, privacy, exit codes and limits: [docs/stored-analysis.md]
 
 ## Development
 
-```bash
-uv run pytest                                   # everything: server + SDK (~95 s)
-uv run pytest sdk/python/tests                  # SDK only (~25 s)
-uv run pytest --deselect server/tests/test_differential.py   # fast loop
-uv run ruff check server sdk examples && uv run ruff format --check server sdk examples
-uv run mypy server/src sdk/python/src           # strict
-uv run python -m aobs_server.model.schema_lock  # schema file matches its lock
-uv run python sdk/python/benchmarks/overhead.py # overhead benchmark (~1 min)
-```
+Setup, the exact checks CI runs, conventions and the safety rules for contributions:
+[CONTRIBUTING.md](CONTRIBUTING.md). In short:
 
-Python 3.11 run: `UV_PROJECT_ENVIRONMENT=.venv-311 uv run --python 3.11 pytest`.
+```bash
+uv sync --locked
+uv run ruff check . && uv run ruff format --check sdk server examples schema
+uv run mypy --strict sdk/python/src server/src
+uv run python -m aobs_server.model.schema_lock  # schema file matches its lock
+uv run pytest -q                                 # everything: SDK + server (~5 min)
+uv run --group docs mkdocs build --strict        # the documentation site
+```
 
 ## Documentation
 
+All guides live in [`docs/`](docs/index.md) and build into a documentation site with MkDocs
+(`mkdocs.yml`).
+
 | Doc | Contents |
 |---|---|
-| [docs/ingestion.md](docs/ingestion.md) | Collector: PostgreSQL setup, API keys, `POST /v1/ingest` request/response, limits, duplicates, retries, errors |
-| [docs/traces-api.md](docs/traces-api.md) | Reading a stored trace and its span events: endpoints, pagination, tenant isolation, privacy |
-| [docs/agent-workflow.md](docs/agent-workflow.md) | **Start here:** the example agent end to end: run it, send its runs to the collector, then list, analyze, compare, gate them and view them in the dashboard (no model API key needed) |
+| [docs/getting-started.md](docs/getting-started.md) | **Start here:** instrument your own agent, then explain and gate its runs |
+| [docs/agent-workflow.md](docs/agent-workflow.md) | The example agent end to end: run it, send its runs to the collector, then list, analyze, compare, gate them and view them in the dashboard (no model API key needed) |
+| [docs/docker.md](docs/docker.md) | The one-command local demo: start, open, send your own traces, reset |
+| [docs/sdk.md](docs/sdk.md) | SDK usage, configuration, privacy, delivery guarantees, exporters, integrations, live smoke tests, limitations |
+| [docs/integrations/anthropic.md](docs/integrations/anthropic.md), [docs/integrations/langchain.md](docs/integrations/langchain.md) | Provider and framework integrations: what is recorded, usage rules, limits |
+| [docs/opentelemetry.md](docs/opentelemetry.md) | Sending traces to OpenTelemetry backends: setup, attribute mapping, delivery, limits |
+| [docs/action-safety.md](docs/action-safety.md) | Guarding side effects: policy, evidence, approval, duplicates, recovery, guarantees and limits |
+| [docs/reliability-gate.md](docs/reliability-gate.md) | Reliability gate: policy file, checks, missing-data rules, exit codes, CI use, limits |
+| [docs/github-action.md](docs/github-action.md) | The gate as a GitHub Action: inputs, outputs, permissions, untrusted-data handling |
 | [docs/stored-analysis.md](docs/stored-analysis.md) | Analyzing stored traces: `db:` selections, `traces list`, analyze/compare/compare-groups/gate and the dashboard over PostgreSQL |
 | [docs/dashboard.md](docs/dashboard.md) | Web dashboard: start, use, local files mode, security, limits |
-| [docs/reliability-gate.md](docs/reliability-gate.md) | Reliability gate: policy file, checks, missing-data rules, exit codes, CI use, limits |
-| [docs/sdk.md](docs/sdk.md) | SDK usage, configuration, privacy, delivery guarantees, integrations, limitations |
-| [docs/benchmarks.md](docs/benchmarks.md) | Overhead method and recorded baseline |
-| [docs/architecture.md](docs/architecture.md) | System shape, stack, ingestion pipeline, storage, privacy, risks, differentiator readiness |
+| [docs/ingestion.md](docs/ingestion.md) | Collector: PostgreSQL setup, API keys, `POST /v1/ingest` request/response, limits, duplicates, retries, errors |
+| [docs/traces-api.md](docs/traces-api.md) | Reading a stored trace and its span events: endpoints, pagination, tenant isolation, privacy |
 | [docs/event-model.md](docs/event-model.md) | Normative event semantics: fields, unknown-value rules, merge, derived state, versioning |
-| [docs/roadmap.md](docs/roadmap.md) | Phases 1–11 with acceptance criteria and status |
-| [docs/decisions.md](docs/decisions.md) | Architecture decision records and pending decisions |
-| [docs/reviews/](docs/reviews/) | Design reviews and what they changed |
-| [schema/CHANGELOG.md](schema/CHANGELOG.md) | Wire schema versions |
+| [docs/architecture.md](docs/architecture.md), [docs/decisions.md](docs/decisions.md) | System shape, stack and the decisions behind them |
+| [docs/roadmap.md](docs/roadmap.md) | Phases with acceptance criteria and status |
+| [docs/benchmarks.md](docs/benchmarks.md) | Overhead method and recorded baseline |
+| [CHANGELOG.md](CHANGELOG.md), [schema/CHANGELOG.md](schema/CHANGELOG.md) | Project and wire-schema changes |
 
 ## Support matrix (honest)
 
 | Integration | Status |
 |---|---|
-| Manual instrumentation (Python ≥ 3.11) | Supported (Phase 2) |
+| Manual instrumentation (Python ≥ 3.11) | Supported |
 | OpenAI-compatible Chat Completions client (Python) | Supported; tested with `openai` 3.29.0 |
+| Anthropic Messages API client (Python) | First version; tested with `anthropic` 2.1.0 over mocked HTTP |
+| LangChain / LangGraph (Python) | First version; tested with `langchain-core` 1.6.13 and `langgraph` 1.2.16 with fake models |
+| OpenTelemetry export (OTLP/HTTP JSON) | First version; payloads validated with `opentelemetry-proto`, not run against a live backend |
 | HTTP ingestion API (any language) | First version — `POST /v1/ingest`, see [docs/ingestion.md](docs/ingestion.md) |
-| OpenTelemetry GenAI (OTLP) ingestion | Planned — Phase 7 |
+| OpenTelemetry GenAI (OTLP) ingestion into the collector | Planned — Phase 7 |
 | Everything else | Not supported |
+
+## Contributing and security
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[code of conduct](CODE_OF_CONDUCT.md). Please report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md), not in a public issue.
 
 ## License
 
