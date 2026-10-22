@@ -52,7 +52,7 @@ agent support_agent          ok         (session_id = thread_id)
    └─ step  tools_condition  ok
 ```
 
-[`examples/langgraph_agent/run.py`](../../examples/langgraph_agent/run.py) is this graph as a
+[`examples/langgraph_agent/run.py`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/langgraph_agent/run.py) is this graph as a
 runnable script; it needs no network or API key (the model is a scripted fake).
 
 To group the graph run with other work, invoke it inside an aobs run; the graph becomes a child
