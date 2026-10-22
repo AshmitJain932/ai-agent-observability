@@ -93,7 +93,7 @@ nav:
       - Python SDK: sdk.md
       - Integrations:
           - Anthropic: integrations/anthropic.md
-          # TODO(lead): add "LangChain: integrations/langchain.md" here once it is merged.
+          - LangChain / LangGraph: integrations/langchain.md
       - Action safety: action-safety.md
       - Reliability gate: reliability-gate.md
       # TODO(lead): add "GitHub Action: github-action.md" here once docs/github-action.md is merged.

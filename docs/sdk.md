@@ -243,6 +243,16 @@ Capabilities declared in the batch `resource`: `llm.usage`, `llm.streaming`,
 Not instrumented: `with_raw_response`, `with_streaming_response`, other endpoints (Responses API,
 embeddings). Not recorded: cost (not reported by Chat Completions), headers, API keys.
 
+### `aobs.integrations.langchain`
+
+`CallbackHandler()` is a LangChain callback handler: pass it as `config={"callbacks": [handler]}`
+to `graph.invoke(...)` / `ainvoke` / `stream` and LangGraph nodes, chains, chat model calls,
+tools and retrievers become nested `agent` / `step` / `llm` / `tool` / `retrieval` spans, with
+usage only when LangChain reports it. `langchain-core` is imported lazily. Tested with
+`langchain-core` 1.6.13 and `langgraph` 1.2.16 using LangChain's fake chat models. See
+[integrations/langchain.md](integrations/langchain.md) and the offline example
+[examples/langgraph_agent](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/langgraph_agent/README.md).
+
 ### `aobs.integrations.anthropic`
 
 `wrap(client, provider=None)` instruments `client.messages.create` (streaming and not),
