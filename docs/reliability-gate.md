@@ -189,7 +189,19 @@ needed; a file that cannot be written is exit code 1.
 
 ## In CI
 
-**GitHub Actions:** [`examples/ci/github-actions-agent-gate.yml`](../examples/ci/github-actions-agent-gate.yml)
+**GitHub Action:** [`actions/gate`](../actions/gate/action.yml) runs the gate as one step, with
+the job summary, a JUnit report and, optionally, one pull-request comment kept up to date
+([github-action.md](github-action.md); a workflow to copy:
+[`examples/ci/github-actions-agent-gate-action.yml`](../examples/ci/github-actions-agent-gate-action.yml)):
+
+```yaml
+- uses: AshmitJain932/ai-agent-observability/actions/gate@<commit-sha>
+  with:
+    policy: examples/diagnose/gate/support_agent.toml
+    traces: traces/*.jsonl
+```
+
+**GitHub Actions without the action:** [`examples/ci/github-actions-agent-gate.yml`](../examples/ci/github-actions-agent-gate.yml)
 is a complete workflow to copy to `.github/workflows/`. It records runs, gates them, writes the
 job summary and keeps the JUnit report and traces as an artifact. Its core:
 
