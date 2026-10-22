@@ -5,7 +5,28 @@ description = "Vendor-neutral instrumentation SDK for AI agents (stdlib-only cor
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
+keywords = ["observability", "tracing", "ai-agents", "llm", "telemetry", "reliability", "guardrails"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: System :: Monitoring",
+  "Typing :: Typed",
+]
 dependencies = []   # deliberately none: the SDK must not conflict with the host application's dependencies
+
+[project.urls]
+Homepage = "https://github.com/AshmitJain932/ai-agent-observability"
+Documentation = "https://github.com/AshmitJain932/ai-agent-observability/blob/master/docs/sdk.md"
+Source = "https://github.com/AshmitJain932/ai-agent-observability"
+Issues = "https://github.com/AshmitJain932/ai-agent-observability/issues"
 
 [build-system]
 requires = ["hatchling>=1.25"]

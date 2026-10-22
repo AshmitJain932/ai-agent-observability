@@ -2,8 +2,25 @@
 name = "aobs-server"
 version = "0.1.0.dev0"
 description = "aobs server: canonical event model, ingestion and query"
+readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
+keywords = ["observability", "tracing", "ai-agents", "llm", "telemetry", "reliability", "guardrails"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: System :: Monitoring",
+  "Environment :: Web Environment",
+  "Framework :: FastAPI",
+]
 dependencies = [
   "pydantic>=2.11,<3",
   "fastapi>=0.143,<1",
@@ -12,6 +29,12 @@ dependencies = [
   "alembic>=1.20,<2",
   "psycopg[binary]>=3.3,<4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/AshmitJain932/ai-agent-observability"
+Documentation = "https://github.com/AshmitJain932/ai-agent-observability/blob/master/README.md"
+Source = "https://github.com/AshmitJain932/ai-agent-observability"
+Issues = "https://github.com/AshmitJain932/ai-agent-observability/issues"
 
 [project.scripts]
 aobs-server = "aobs_server.cli:main"
