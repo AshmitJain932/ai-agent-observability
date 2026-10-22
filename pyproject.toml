@@ -15,6 +15,11 @@ dev = [
   "httpx>=0.28",  # FastAPI TestClient in server tests
   "playwright>=1.55,<2",  # dashboard browser tests (uses the Chromium installed by `playwright install chromium`)
 ]
+# Documentation site (mkdocs.yml). Not installed by a plain `uv sync`: use `uv run --group docs mkdocs ...`.
+docs = [
+  "mkdocs>=1.6,<2",  # MkDocs 2 is a backward-incompatible rewrite that Material does not support
+  "mkdocs-material>=9.5,<10",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["server/tests", "sdk/python/tests"]

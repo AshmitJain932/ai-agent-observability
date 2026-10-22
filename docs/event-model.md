@@ -1,10 +1,10 @@
 # Canonical Event Model — v1.0
 
 Status: **Normative** (Phase 1, 2026-10-12). The wire format is defined by
-[`schema/v1/ingest.schema.json`](../schema/v1/ingest.schema.json); this document defines the
-semantics JSON Schema cannot express (merge rules, derived states, version leniency). The reference
-implementation is `server/src/aobs_server/model/`; the conformance suite is `schema/fixtures/`.
-Changes since the Phase 0 draft are explained in
+[`schema/v1/ingest.schema.json`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/schema/v1/ingest.schema.json);
+this document defines the semantics JSON Schema cannot express (merge rules, derived states,
+version leniency). The reference implementation is `server/src/aobs_server/model/`; the
+conformance suite is `schema/fixtures/`. Changes since the Phase 0 draft are explained in
 [reviews/2026-10-12-pre-phase-1-review.md](reviews/2026-10-12-pre-phase-1-review.md).
 
 ## 1. Concepts and hierarchy
