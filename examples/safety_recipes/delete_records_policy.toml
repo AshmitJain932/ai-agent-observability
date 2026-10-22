@@ -1,0 +1,12 @@
+# Action-safety policy for the delete-records recipe (aobs.safety; see docs/action-safety.md).
+# Anything not listed here is denied.
+version = 1
+
+[actions.delete_customer_records]
+# Evidence, from the CRM: which account owns the requested records, and how many of them exist.
+required_evidence = ["account_id", "count"]
+must_match = ["account_id"]     # every record belongs to the account that asked
+amount = "count"                # the number of records to delete
+amount_at_most_evidence = true  # never more records than exist (a missing record denies)
+max_amount = "100"              # larger deletions go through the bulk-erasure process instead
+approval_above = "25"           # a person approves above this

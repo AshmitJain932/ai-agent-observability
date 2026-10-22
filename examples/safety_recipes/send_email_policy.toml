@@ -1,0 +1,8 @@
+# Action-safety policy for the send-email recipe (aobs.safety; see docs/action-safety.md).
+# Anything not listed here is denied.
+version = 1
+
+[actions.send_email]
+required_evidence = ["ticket_id", "to", "template"]  # the ticket, its customer's address, a known template
+must_match = ["ticket_id", "to", "template"]         # the model's recipient must be the customer on record
+once_per = ["ticket_id", "template"]                 # one email per (ticket, template)

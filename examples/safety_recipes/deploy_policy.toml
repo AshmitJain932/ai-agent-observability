@@ -1,0 +1,15 @@
+# Action-safety policy for the deploy recipe (aobs.safety; see docs/action-safety.md).
+# Anything not listed here is denied.
+version = 1
+
+[actions.deploy]
+# Evidence: the release request (service, environment), the commit CI marked green for that service,
+# and the environment's approval level from the deploy-target registry.
+required_evidence = ["service", "environment", "commit", "approval_level"]
+must_match = ["service", "environment", "commit", "approval_level"]  # only the green commit, as requested
+# The approval threshold is numeric, so each environment has a numeric level in the registry:
+# staging = 1 runs on its own, production = 2 needs a person, and nothing above production exists.
+amount = "approval_level"
+approval_above = "1"
+max_amount = "2"
+once_per = ["service", "environment", "commit"]  # each commit is deployed at most once per environment
