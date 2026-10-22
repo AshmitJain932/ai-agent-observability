@@ -531,9 +531,9 @@ def _dashboard(args: argparse.Namespace, settings: Settings) -> int:
     import uvicorn
 
     from .dashboard import DashboardConfig, create_app
-    from .dashboard.datasets import REPO_EXAMPLES
+    from .dashboard.datasets import PACKAGED_SAMPLES
 
-    samples = None if args.no_samples else Path(args.samples_dir) if args.samples_dir else REPO_EXAMPLES
+    samples = None if args.no_samples else Path(args.samples_dir) if args.samples_dir else PACKAGED_SAMPLES
     data_dir = Path(args.data_dir).resolve() if args.data_dir else None
     if data_dir is not None and not data_dir.is_dir():
         raise CommandError(f"--data-dir {data_dir} is not a directory")
@@ -562,6 +562,8 @@ def _dashboard(args: argparse.Namespace, settings: Settings) -> int:
     print(f"aobs dashboard on {url}", flush=True)
     if samples is not None and not samples.is_dir():
         print(f"  note: sample data not found at {samples}; only --data-dir will be shown", flush=True)
+    elif samples is None and not args.no_samples:  # pragma: no cover - only when imported from a zip archive
+        print("  note: the installed sample data cannot be read as files; it is not shown", flush=True)
     if data_dir is not None:
         print(f"  local trace files: {data_dir}", flush=True)
     if project_id is not None:
@@ -584,6 +586,42 @@ def _dashboard(args: argparse.Namespace, settings: Settings) -> int:
     finally:
         if engine is not None:
             engine.dispose()
+    return 0
+
+
+def _demo_seed(args: argparse.Namespace, settings: Settings) -> int:
+    from pathlib import Path
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from .dashboard.datasets import PACKAGED_SAMPLES
+    from .demo import SeedError, seed
+    from .storage.db import make_engine
+
+    samples = Path(args.samples_dir) if args.samples_dir else PACKAGED_SAMPLES
+    if samples is None or not samples.is_dir():
+        raise CommandError(f"no sample recordings at {samples}: pass --samples-dir DIR")
+    engine = make_engine(settings.require_database_url(), pool_size=1)
+    try:
+        result = seed(engine, args.collector, samples, args.org, args.project)
+    except SeedError as exc:
+        raise CommandError(str(exc)) from None
+    except SQLAlchemyError as exc:
+        raise CommandError(f"cannot use the database ({type(exc).__name__}); run `aobs-server db upgrade`") from None
+    finally:
+        engine.dispose()
+    _print(result.to_dict())
+    return 0
+
+
+def _demo_project_id(args: argparse.Namespace, settings: Settings) -> int:
+    from .demo import find_project
+
+    with _transaction(settings) as conn:
+        found = find_project(conn, args.org, args.project)
+    if found is None:
+        raise CommandError(f"no project {args.project!r} in organization {args.org!r}: run `aobs-server demo seed`")
+    print(found[1])
     return 0
 
 
@@ -768,7 +806,8 @@ def build_parser() -> argparse.ArgumentParser:
     dash = commands.add_parser(
         "dashboard",
         help="start the web dashboard (sample data, a directory of trace files, and/or a project's stored traces)",
-        description="Serve the read-only dashboard. Sample recordings from examples/diagnose are shown by default; "
+        description="Serve the read-only dashboard. The sample recordings installed with aobs-server (the same as "
+        "examples/diagnose) are shown by default; "
         "--data-dir adds your own JSONL trace files and --project a project's traces stored in PostgreSQL "
         "(AOBS_DATABASE_URL), both protected by a token printed at start-up.",
     )
@@ -776,13 +815,41 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--port", type=int, default=8800, help="port (default 8800)")
     dash.add_argument("--data-dir", metavar="DIR", help="directory of JSONL trace files to show (needs the token)")
     dash.add_argument(
-        "--samples-dir", metavar="DIR", help="where the sample recordings live (default examples/diagnose)"
+        "--samples-dir", metavar="DIR", help="where the sample recordings live (default: the installed copy)"
     )
     dash.add_argument("--no-samples", action="store_true", help="do not show the sample datasets")
     dash.add_argument(
         "--project", metavar="PROJECT_ID", help="also show this project's stored traces (needs the token)"
     )
     dash.set_defaults(handler=_dashboard)
+
+    demo = commands.add_parser("demo", help="a local demo collector with sample traces (docs/docker.md)")
+    demo_actions = demo.add_subparsers(dest="demo_command", metavar="ACTION")
+    demo_actions.required = True
+    demo_seed = demo_actions.add_parser(
+        "seed",
+        help="create the demo project and send it the sample traces through a collector (idempotent)",
+        description="Find or create the demo organization and project (metadata-only), then, unless the project "
+        "already holds every sample trace, send the sample recordings to COLLECTOR's POST /v1/ingest with a "
+        "temporary ingest key that is revoked afterwards and never printed. Prints the ids and ingest counts. "
+        "Needs AOBS_DATABASE_URL.",
+    )
+    demo_seed.add_argument(
+        "--collector", required=True, metavar="URL", help="the running collector (aobs-server serve)"
+    )
+    demo_seed.add_argument(
+        "--samples-dir",
+        metavar="DIR",
+        help="sample recordings laid out like examples/diagnose (default: installed copy)",
+    )
+    demo_project_id = demo_actions.add_parser(
+        "project-id", help="print the demo project's id (exit code 1 if it does not exist yet)"
+    )
+    for action in (demo_seed, demo_project_id):
+        action.add_argument("--org", default="aobs-demo", help="organization name (default aobs-demo)")
+        action.add_argument("--project", default="demo", help="project name (default demo)")
+    demo_seed.set_defaults(handler=_demo_seed)
+    demo_project_id.set_defaults(handler=_demo_project_id)
     return parser
 
 

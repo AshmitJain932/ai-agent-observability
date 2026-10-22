@@ -22,6 +22,9 @@ production-hardened service.
 
 ## Quick start
 
+To try it without setting anything up, `docker compose up` in the repository root starts
+PostgreSQL, the collector and the dashboard, with sample traces: [docker.md](docker.md). Step by step:
+
 **1. PostgreSQL 16.** Any PostgreSQL 16 server you can create a database on works. For example,
 with Docker:
 

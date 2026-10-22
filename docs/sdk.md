@@ -39,7 +39,8 @@ To guard side-effecting tools (refunds, payments) with policy checks, approval a
 prevention, see [action-safety.md](action-safety.md).
 
 To store runs in the collector, pass `endpoint=` and `api_key=` (or set `AOBS_ENDPOINT` and
-`AOBS_API_KEY`); see [ingestion.md](ingestion.md). Without a collector, use
+`AOBS_API_KEY`); see [ingestion.md](ingestion.md). For a local collector and dashboard in one
+command, see [docker.md](docker.md). Without a collector, use
 `exporter=JsonlFileExporter("traces.jsonl")` (see the example agent) or your own exporter.
 
 ## API

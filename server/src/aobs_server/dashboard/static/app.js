@@ -175,7 +175,7 @@ async function route() {
   note.hidden = false;
   note.textContent =
     dataset.kind === "sample"
-      ? `Sample recordings shipped with the repository, not live production traffic. ${dataset.description}`
+      ? `Sample recordings shipped with aobs-server, not live production traffic. ${dataset.description}`
       : dataset.kind === "stored"
         ? `${dataset.description} Read from the collector's database with the project's current privacy policy.`
         : `${dataset.description} These are files on disk, not live ingestion.`;

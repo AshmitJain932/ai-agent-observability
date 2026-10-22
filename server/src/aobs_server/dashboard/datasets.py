@@ -3,7 +3,9 @@ traces stored in PostgreSQL.
 
 A file dataset is a directory of JSONL files (what the SDK's ``JsonlFileExporter`` writes). Kinds:
 
-* **sample**: the example recordings shipped in ``examples/diagnose/`` (public repository data);
+* **sample**: the example recordings of ``examples/diagnose/`` (public repository data). A copy is
+  installed with the package (``aobs_server/dashboard/samples``, kept identical by a test), so an
+  installed ``aobs-server`` shows them without a clone of the repository;
 * **local**: a directory the operator points the dashboard at (``--data-dir``); access needs the
   dashboard token.
 * **stored**: the most recently started traces of one project in the collector's database
@@ -28,6 +30,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from importlib import resources
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -42,7 +45,17 @@ from ..model.assembly import AssemblyConfig
 Kind = Literal["sample", "local", "stored"]
 MAX_FILES = 200
 MAX_FILE_BYTES = 50 * 1024 * 1024
-REPO_EXAMPLES = Path(__file__).resolve().parents[4] / "examples" / "diagnose"
+REPO_EXAMPLES = Path(__file__).resolve().parents[4] / "examples" / "diagnose"  # only exists in a clone
+
+
+def _packaged_samples() -> Path | None:
+    """The sample recordings installed with the package, or None when the package is not installed as
+    plain files (e.g. imported from a zip archive), in which case there are no sample datasets."""
+    root = resources.files("aobs_server.dashboard") / "samples"
+    return root if isinstance(root, Path) and root.is_dir() else None
+
+
+PACKAGED_SAMPLES = _packaged_samples()
 
 
 @dataclass(frozen=True)
@@ -101,7 +114,11 @@ class LoadedDataset:
 
 
 def sample_datasets(base: Path | None = None) -> list[DatasetSpec]:
-    root = base or REPO_EXAMPLES
+    """The sample datasets found under ``base`` (default: the copy installed with the package); a
+    directory laid out like ``examples/diagnose`` works too."""
+    root = base or PACKAGED_SAMPLES
+    if root is None:
+        return []
     specs = [
         DatasetSpec(
             "sample-repeated",

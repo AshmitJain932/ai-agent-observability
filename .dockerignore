@@ -1,0 +1,14 @@
+# The image needs only the workspace metadata, the lock file and server/ (see Dockerfile).
+# Everything else stays out of the build context, above all local secrets and trace files.
+**
+!pyproject.toml
+!uv.lock
+!server/pyproject.toml
+!server/README.md
+!server/LICENSE
+!server/src/**
+!sdk/python/pyproject.toml
+!sdk/python/README.md
+!sdk/python/LICENSE
+**/__pycache__
+**/*.pyc

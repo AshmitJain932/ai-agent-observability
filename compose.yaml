@@ -1,0 +1,120 @@
+# Local demo of aobs: `docker compose up`, then open http://localhost:8800/ (docs/docker.md).
+#
+#   postgres   PostgreSQL 16, data in the `pgdata` volume (not published on the host)
+#   migrate    one-shot: aobs-server db upgrade
+#   collector  aobs-server serve, the ingestion API, on http://127.0.0.1:8000
+#   seed       one-shot: aobs-server demo seed, sends the sample traces through the collector (idempotent)
+#   dashboard  aobs-server dashboard over the sample files and the seeded project, on http://127.0.0.1:8800
+#
+# DEMO-ONLY CREDENTIALS. The database password and the dashboard token below are well-known
+# defaults for a local demo on your own machine. Override them with AOBS_DEMO_DB_PASSWORD and
+# AOBS_DEMO_DASHBOARD_TOKEN; do not use this file, or these values, for anything you deploy.
+# Ports are bound to 127.0.0.1 unless you set AOBS_DEMO_BIND. Reset everything: docker compose down -v
+name: aobs-demo
+
+x-aobs: &aobs
+  image: ${AOBS_DEMO_IMAGE:-aobs-server:local}
+  build:
+    context: .
+    args:
+      PYTHON_IMAGE: ${AOBS_DEMO_PYTHON_IMAGE:-python:3.13-slim}
+  environment: &aobs-env
+    # Demo-only password (see the header); the same value as POSTGRES_PASSWORD below.
+    AOBS_DATABASE_URL: postgresql://aobs:${AOBS_DEMO_DB_PASSWORD:-aobs-demo-password}@postgres:5432/aobs
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: aobs
+      POSTGRES_DB: aobs
+      POSTGRES_PASSWORD: ${AOBS_DEMO_DB_PASSWORD:-aobs-demo-password} # demo only
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aobs -d aobs"]
+      start_period: 60s
+      start_interval: 1s # checked every second while starting, then every 10 s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  migrate:
+    <<: *aobs
+    command: ["db", "upgrade"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  collector:
+    <<: *aobs
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${AOBS_DEMO_BIND:-127.0.0.1}:${AOBS_DEMO_COLLECTOR_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:8000/readyz', timeout=3)"
+      start_period: 60s
+      start_interval: 1s # checked every second while starting, then every 10 s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  seed:
+    <<: *aobs
+    command: ["demo", "seed", "--collector", "http://collector:8000"]
+    environment:
+      <<: *aobs-env
+      NO_PROXY: collector
+      no_proxy: collector
+    depends_on:
+      collector:
+        condition: service_healthy
+    restart: "no"
+
+  dashboard:
+    <<: *aobs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -e; project=$$(aobs-server demo project-id);
+        echo "aobs demo: on this machine, open http://localhost:$$HOST_PORT/#token=$$AOBS_DASHBOARD_TOKEN";
+        exec aobs-server dashboard --host 0.0.0.0 --port 8800 --project "$$project"
+    environment:
+      <<: *aobs-env
+      HOST_PORT: ${AOBS_DEMO_DASHBOARD_PORT:-8800}
+      # Demo-only token (see the header): protects the Stored traces dataset; open /#token=<token>.
+      AOBS_DASHBOARD_TOKEN: ${AOBS_DEMO_DASHBOARD_TOKEN:-aobs-demo-token}
+    ports:
+      - "${AOBS_DEMO_BIND:-127.0.0.1}:${AOBS_DEMO_DASHBOARD_PORT:-8800}:8800"
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:8800/api/health', timeout=3)"
+      start_period: 60s
+      start_interval: 1s # checked every second while starting, then every 10 s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  pgdata:

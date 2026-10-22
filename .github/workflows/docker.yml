@@ -1,0 +1,60 @@
+# Builds the aobs-server image (never pushed) and smoke-tests the local demo stack (compose.yaml,
+# docs/docker.md) on pull requests that touch it. The demo's credentials are its documented
+# local-only defaults; nothing secret is used.
+name: Docker
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - compose.yaml
+      - pyproject.toml
+      - uv.lock
+      - server/**
+      - .github/workflows/docker.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  demo:
+    name: Build the image and start the demo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image (not pushed)
+        run: docker compose build
+      - name: The installed package has its sample datasets
+        run: >-
+          docker run --rm --entrypoint python aobs-server:local -c
+          "from aobs_server.dashboard.datasets import sample_datasets as s; ids = [d.id for d in s()];
+          print(ids); assert len(ids) == 3"
+      - name: Start the demo (postgres, migrate, collector, seed, dashboard)
+        run: docker compose up -d --wait --wait-timeout 180
+      - name: The collector is ready and the dashboard shows the seeded traces
+        run: |
+          set -euo pipefail
+          curl -fsS http://127.0.0.1:8000/readyz
+          datasets=$(curl -fsS http://127.0.0.1:8800/api/datasets)
+          grep -q '"stored"' <<<"$datasets"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8800/api/datasets/stored/overview)" = 401
+          curl -fsS -H "Authorization: Bearer aobs-demo-token" http://127.0.0.1:8800/api/datasets/stored/overview \
+            | python3 -c 'import json, sys; runs = json.load(sys.stdin)["runs"]; print("stored runs:", runs); assert runs == 73'
+      - name: Starting again sends nothing
+        run: |
+          set -euo pipefail
+          docker compose up -d --wait --wait-timeout 180 --force-recreate seed dashboard
+          seed=$(docker compose logs --no-log-prefix seed)
+          grep '"seeded": false' <<<"$seed"
+      - name: Logs
+        if: always()
+        run: docker compose logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
