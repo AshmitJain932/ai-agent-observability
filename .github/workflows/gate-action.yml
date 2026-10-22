@@ -1,0 +1,142 @@
+# Self-test of the reliability-gate action (actions/gate) on the bundled example traces: the
+# action is used by path, exactly as a user's workflow would use it, and the expected verdicts are
+# asserted. Runs when the action or the gate code changes, and on demand.
+name: gate action
+
+on:
+  pull_request:
+    paths:
+      - "actions/**"
+      - ".github/workflows/gate-action.yml"
+      - "server/pyproject.toml"
+      - "server/src/aobs_server/cli.py"
+      - "server/src/aobs_server/diagnosis/**"
+      - "server/src/aobs_server/ingest/**"
+      - "server/src/aobs_server/model/**"
+      - "examples/diagnose/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-action-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  expect-pass:
+    name: Healthy runs pass
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate the healthy support-agent runs
+        id: gate
+        uses: ./actions/gate
+        with:
+          policy: examples/diagnose/gate/support_agent.toml
+          traces: examples/diagnose/compare/refund_ok*.jsonl
+          python-version: "3.11" # the oldest Python aobs-server supports
+
+      - name: Gate a run against itself as the baseline
+        id: baseline
+        uses: ./actions/gate
+        with:
+          policy: examples/diagnose/gate/restock_baseline.toml
+          baseline: examples/diagnose/compare/inventory_v1.jsonl
+          traces: examples/diagnose/compare/inventory_v1.jsonl
+
+      - name: Check the outputs
+        env:
+          RESULT: ${{ steps.gate.outputs.result }}
+          EXIT_CODE: ${{ steps.gate.outputs.exit-code }}
+          JUNIT: ${{ steps.gate.outputs.junit-path }}
+          MARKDOWN: ${{ steps.gate.outputs.markdown-path }}
+          BASELINE_RESULT: ${{ steps.baseline.outputs.result }}
+        run: |
+          test "$RESULT" = pass && test "$EXIT_CODE" = 0 && test "$BASELINE_RESULT" = pass
+          grep -q '<testsuites' "$JUNIT"
+          grep -q 'aobs reliability gate: \*\*PASS\*\*' "$MARKDOWN"
+          grep -q '2 of 2 run(s) passed' "$MARKDOWN"
+
+  expect-fail:
+    name: Regressing runs fail
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate the refund outage (report only)
+        id: report-only
+        uses: ./actions/gate
+        with:
+          policy: examples/diagnose/gate/support_agent.toml
+          traces: examples/diagnose/compare/refund_outage.jsonl
+          fail-on-regression: "false"
+
+      - name: Gate the refund outage (enforced; must fail)
+        id: enforced
+        continue-on-error: true
+        uses: ./actions/gate
+        with:
+          policy: examples/diagnose/gate/support_agent.toml
+          traces: examples/diagnose/compare/refund_outage.jsonl
+
+      - name: Gate the inventory regression against its baseline (report only)
+        id: baseline
+        uses: ./actions/gate
+        with:
+          policy: examples/diagnose/gate/restock_baseline.toml
+          baseline: examples/diagnose/compare/inventory_v1.jsonl
+          traces: examples/diagnose/compare/inventory_v2.jsonl
+          fail-on-regression: "false"
+
+      - name: Gate a missing file (no verdict; must fail even when regressions are tolerated)
+        id: missing
+        continue-on-error: true
+        uses: ./actions/gate
+        with:
+          policy: examples/diagnose/gate/support_agent.toml
+          traces: traces/does-not-exist.jsonl
+          fail-on-regression: "false"
+
+      - name: Check the outcomes
+        env:
+          REPORT_ONLY: ${{ steps.report-only.outputs.result }}
+          REPORT_ONLY_CODE: ${{ steps.report-only.outputs.exit-code }}
+          MARKDOWN: ${{ steps.report-only.outputs.markdown-path }}
+          ENFORCED_OUTCOME: ${{ steps.enforced.outcome }}
+          BASELINE: ${{ steps.baseline.outputs.result }}
+          MISSING_OUTCOME: ${{ steps.missing.outcome }}
+        run: |
+          test "$REPORT_ONLY" = fail && test "$REPORT_ONLY_CODE" = 3
+          grep -q 'aobs reliability gate: \*\*FAIL\*\*' "$MARKDOWN"
+          grep -q 'run.require_success' "$MARKDOWN"
+          test "$ENFORCED_OUTCOME" = failure
+          test "$BASELINE" = fail
+          test "$MISSING_OUTCOME" = failure
+
+  comment-without-permission:
+    name: Comment requested without pull-requests write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # This workflow grants only contents: read, so the comment cannot be written: the action
+      # must warn (or, on a fork or outside a pull request, skip with a notice) and still pass.
+      - name: Gate with comment-on-pr
+        id: gate
+        uses: ./actions/gate
+        with:
+          policy: examples/diagnose/gate/support_agent.toml
+          traces: examples/diagnose/compare/refund_ok.jsonl
+          comment-on-pr: "true"
+          comment-tag: self-test
+
+      - name: Check that no comment was written
+        env:
+          RESULT: ${{ steps.gate.outputs.result }}
+          COMMENT_URL: ${{ steps.gate.outputs.comment-url }}
+        run: test "$RESULT" = pass && test -z "$COMMENT_URL"

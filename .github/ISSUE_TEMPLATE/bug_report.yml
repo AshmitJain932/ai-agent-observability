@@ -1,0 +1,66 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Security problems** (for example a redaction bypass, reading another
+        project's data, or `aobs.safety` executing a denied or duplicate action) must not be reported
+        here: use private vulnerability reporting as described in SECURITY.md.
+
+        Do not paste API keys, database URLs with passwords, or real prompts and customer data.
+        Trace files can contain content: share a minimal, made-up one.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - SDK (aobs)
+        - Action safety (aobs.safety)
+        - OpenAI-compatible integration
+        - Collector / ingestion API (aobs-server serve)
+        - Traces read API
+        - Diagnosis (analyze, compare, compare-groups)
+        - Reliability gate (aobs-server gate)
+        - Stored-trace analysis (db: selections, traces list)
+        - Dashboard
+        - Wire schema / event model
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: A minimal script, command or request, ideally runnable without API keys or a model provider.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output, error or traceback
+      description: Remove anything secret first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: "`git rev-parse --short HEAD` of your checkout, or the package version."
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, operating system, PostgreSQL version (if the collector is involved).
+      placeholder: Python 3.12, Ubuntu 24.04, PostgreSQL 16.4

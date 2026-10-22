@@ -11,8 +11,17 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.11",
   "openai>=3.29,<4",  # tests of the openai_compat integration (SDK itself does not depend on it)
+  "anthropic>=2.1,<3",  # tests of the anthropic integration (SDK itself does not depend on it)
   "httpx>=0.28",  # FastAPI TestClient in server tests
   "playwright>=1.55,<2",  # dashboard browser tests (uses the Chromium installed by `playwright install chromium`)
+  "opentelemetry-proto>=1.27,<2",  # OTLP conformance checks in the OTLP exporter tests (the SDK itself stays stdlib-only)
+  "langchain-core>=1.6.13,<2",  # tests of the langchain integration (SDK itself does not depend on it)
+  "langgraph>=1.2.16,<2",  # LangGraph graphs in the langchain integration tests and example
+]
+# Documentation site (mkdocs.yml). Not installed by a plain `uv sync`: use `uv run --group docs mkdocs ...`.
+docs = [
+  "mkdocs>=1.6,<2",  # MkDocs 2 is a backward-incompatible rewrite that Material does not support
+  "mkdocs-material>=9.5,<10",
 ]
 
 [tool.pytest.ini_options]

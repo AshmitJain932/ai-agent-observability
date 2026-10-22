@@ -66,4 +66,5 @@ What protects against a duplicate refund, and what does not:
   stating that the original process has stopped.
 * Nothing here is exactly-once execution.
 
-The full guide: [docs/action-safety.md](../../docs/action-safety.md).
+The full guide: [docs/action-safety.md](../../docs/action-safety.md). Recipes for emails, deletions and deploys:
+[examples/safety_recipes](../safety_recipes/README.md).

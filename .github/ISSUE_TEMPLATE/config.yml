@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/AshmitJain932/ai-agent-observability/security/advisories/new
+    about: Please report security problems privately (GitHub private vulnerability reporting), not as a public issue. See SECURITY.md.
+  - name: Security policy
+    url: https://github.com/AshmitJain932/ai-agent-observability/blob/master/SECURITY.md
+    about: What is in scope, and how reports are handled.
+  - name: Documentation
+    url: https://github.com/AshmitJain932/ai-agent-observability/tree/master/docs
+    about: Guides and reference for the SDK, the collector, the reliability gate and action safety.
