@@ -28,7 +28,49 @@ cost — as nested traces, regardless of framework or model provider.
 | Ingestion API (`aobs-server serve`, `POST /v1/ingest`): API-key auth, privacy before storage, retry-safe idempotent merge, per-trace locking, trace summaries | `server/src/aobs_server/api/`, `ingest/`, `storage/traces.py`, [docs/ingestion.md](docs/ingestion.md) | First version (Phase 3; no rate limiting or retention job yet) |
 | Trace read API (`GET /v1/projects/{id}/traces/{trace_id}`, `…/events`): read-scoped keys, uniform 404 across projects, content opt-in under the project's current privacy settings, pagination | `server/src/aobs_server/query/`, [docs/traces-api.md](docs/traces-api.md) | First version (Phase 3; no run list or search yet) |
 | Analysis of stored traces: `db:` selections for `analyze`, `compare`, `compare-groups`, `gate`; `traces list`; a *Stored traces* dashboard dataset (`--project`) | `server/src/aobs_server/diagnosis/stored.py`, [docs/stored-analysis.md](docs/stored-analysis.md) | First version (CLI and dashboard read PostgreSQL directly) |
+| Action safety (`aobs.safety`): policy checks against trusted evidence before a side effect, approval, duplicate prevention, durable SQLite store, recovery without blind retries, provider idempotency keys | `sdk/python/src/aobs/safety.py`, [docs/action-safety.md](docs/action-safety.md) | First version (one host; not exactly-once: see its guarantees) |
 | HTTP query API (run list, search, analysis over read-scoped keys) | — | Phase 4 |
+
+## Quick start: your own agent
+
+Requires Python ≥ 3.11. Not on PyPI yet: install from a clone of this repository.
+
+```bash
+git clone https://github.com/AshmitJain932/ai-agent-observability.git
+pip install ./ai-agent-observability/sdk/python ./ai-agent-observability/server
+```
+
+Record what your agent does (the SDK has no dependencies; nothing leaves your machine with a file
+exporter):
+
+```python
+import aobs
+from aobs.export import JsonlFileExporter
+
+aobs.init(service_name="my-agent", exporter=JsonlFileExporter("traces.jsonl"))
+
+
+@aobs.tool
+def lookup_order(order_id: str) -> dict:
+    return {"order_id": order_id, "status": "delivered"}
+
+
+with aobs.run("answer_ticket", session_id="ticket-1"):
+    lookup_order("1042")  # model calls: wrap your client with aobs.integrations.openai_compat.wrap(...)
+
+aobs.shutdown()
+```
+
+Then explain the run, and check it against written requirements (exit code 3 on FAIL, for CI):
+
+```bash
+aobs-server analyze traces.jsonl
+aobs-server gate --policy ai-agent-observability/examples/diagnose/gate/support_agent.toml traces.jsonl
+```
+
+Next: [docs/sdk.md](docs/sdk.md) (SDK and model-client integration),
+[docs/reliability-gate.md](docs/reliability-gate.md) (writing a policy) and
+[docs/action-safety.md](docs/action-safety.md) (guarding refunds, payments and other side effects).
 
 ## Try it
 

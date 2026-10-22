@@ -65,3 +65,5 @@ What protects against a duplicate refund, and what does not:
   unknown stays unknown until a person resolves it, and resolving a stale one as failed requires
   stating that the original process has stopped.
 * Nothing here is exactly-once execution.
+
+The full guide: [docs/action-safety.md](../../docs/action-safety.md).
