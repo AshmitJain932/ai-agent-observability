@@ -1,0 +1,55 @@
+# Reliability gate for an AI agent in GitHub Actions, as one step: the aobs gate action
+# (actions/gate in this repository; docs/github-action.md). A template; it is not active here.
+# github-actions-agent-gate.yml next to this file does the same with plain commands.
+#
+# To use it: copy this file to .github/workflows/agent-gate.yml, replace the "Record agent runs"
+# step with your own test harness (any code that runs your agent with
+#   aobs.init(..., exporter=JsonlFileExporter("traces/<name>.jsonl"))
+# ), and point `policy` at your policy file (docs/reliability-gate.md). As written, it runs this
+# repository's example support agent with its scripted mock model: no API key and no calls to a
+# model provider.
+#
+# Pin the action to a commit SHA (or a tag) of AshmitJain932/ai-agent-observability that you have
+# reviewed: `@master` below follows the branch and is only a placeholder. The action installs
+# aobs-server from that same commit, so the gate and the action always match.
+name: agent reliability gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write # only for comment-on-pr; remove both if you do not want the comment
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+
+      - name: Record agent runs (scripted mock model; no API key)
+        run: |
+          mkdir -p traces
+          uv run python examples/support_agent/run.py --scenario success --out traces/success.jsonl --quiet
+          uv run python examples/support_agent/run.py --scenario refund --out traces/refund.jsonl --quiet
+
+      - name: Reliability gate
+        id: gate
+        uses: AshmitJain932/ai-agent-observability/actions/gate@master
+        with:
+          policy: examples/diagnose/gate/support_agent.toml
+          traces: traces/*.jsonl
+          comment-on-pr: "true"
+
+      # The traces hold what the SDK's capture mode recorded: metadata only by default.
+      - name: Keep the report and the traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-gate
+          path: |
+            ${{ steps.gate.outputs.junit-path }}
+            traces/

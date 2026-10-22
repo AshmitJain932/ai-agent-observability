@@ -10,7 +10,8 @@
 # repository's example support agent with its scripted mock model: no API key and no calls to a
 # model provider. Pin the actions to versions (or commit SHAs) your organization trusts.
 #
-# server/tests/test_gate_reports.py runs these same commands, so they stay working.
+# server/tests/test_gate_reports.py runs these same commands, so they stay working. The same job as
+# one step, with the reliability-gate action: github-actions-agent-gate-action.yml next to this file.
 name: agent reliability gate
 
 on:

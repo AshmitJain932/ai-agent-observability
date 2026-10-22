@@ -1,0 +1,148 @@
+# aobs reliability gate as one workflow step. Documentation: docs/github-action.md
+#
+#   - uses: AshmitJain932/ai-agent-observability/actions/gate@<ref>
+#     with:
+#       policy: agent-gate.toml
+#       traces: traces/*.jsonl
+#
+# Every input reaches the shell steps through an environment variable, never by expression
+# interpolation into a `run:` script, so an input value cannot inject shell code.
+name: aobs reliability gate
+description: >-
+  Check recorded AI agent runs against the requirements in a policy file (aobs-server gate): PASS or
+  FAIL, with a JUnit report, a job summary and optionally one sticky pull-request comment.
+author: AshmitJain932
+
+inputs:
+  policy:
+    description: Path of the gate policy (TOML; see docs/reliability-gate.md).
+    required: true
+  traces:
+    description: >-
+      Runs to check, one per line: a trace file (SDK JSONL or JSON batch), a glob pattern such as
+      traces/*.jsonl (** matches directories), or a db: selection together with the project input.
+    required: true
+  baseline:
+    description: >-
+      Known-good run (file or db: selection) for the policy's [baseline] requirements.
+    required: false
+    default: ""
+  baseline-trace:
+    description: Pick the baseline run by trace id prefix when the baseline input holds several runs.
+    required: false
+    default: ""
+  project:
+    description: >-
+      Project id for db: selections. The database URL is read from AOBS_DATABASE_URL: set it on this
+      step's env from a secret.
+    required: false
+    default: ""
+  no-error-messages:
+    description: Leave error messages out of every report ("true" or "false").
+    required: false
+    default: "false"
+  report-dir:
+    description: Directory for agent-gate.xml and agent-gate.md. Default a new directory under RUNNER_TEMP.
+    required: false
+    default: ""
+  python-version:
+    description: Python version for aobs-server (installed by actions/setup-python, without changing the job's PATH).
+    required: false
+    default: "3.13"
+  install-source:
+    description: >-
+      What pip installs as aobs-server. Default (empty) the server package of this action's own
+      checkout, so the gate is the same version as the action; for example aobs-server==X.Y once it
+      is published.
+    required: false
+    default: ""
+  comment-on-pr:
+    description: >-
+      On pull_request events, post the summary as one pull-request comment, updated on every run
+      ("true" or "false"). Needs permissions pull-requests write; skipped with a notice on forks.
+    required: false
+    default: "false"
+  comment-tag:
+    description: Tells the comments of several gate steps in one pull request apart (letters, digits, . _ -).
+    required: false
+    default: default
+  fail-on-regression:
+    description: Fail the step when the gate fails ("true" or "false"). A gate that gives no verdict always fails.
+    required: false
+    default: "true"
+
+outputs:
+  result:
+    description: pass, fail, or error (no verdict, for example a missing file or an invalid policy).
+    value: ${{ steps.gate.outputs.result }}
+  exit-code:
+    description: Exit code of aobs-server gate (0 pass, 1 missing input, 2 invalid policy or options, 3 fail).
+    value: ${{ steps.gate.outputs.exit-code }}
+  junit-path:
+    description: Path of the JUnit XML report.
+    value: ${{ steps.gate.outputs.junit-path }}
+  markdown-path:
+    description: Path of the Markdown report (the same text as the job summary).
+    value: ${{ steps.gate.outputs.markdown-path }}
+  comment-url:
+    description: URL of the pull-request comment, when one was posted or updated.
+    value: ${{ steps.comment.outputs.comment-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python for aobs-server
+      id: python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        update-environment: false
+
+    - name: Install aobs-server
+      id: install
+      shell: bash
+      env:
+        AOBS_PYTHON: ${{ steps.python.outputs.python-path }}
+        AOBS_INSTALL_SOURCE: ${{ inputs.install-source }}
+      run: bash "$GITHUB_ACTION_PATH/gate.sh" install
+
+    - name: Run the reliability gate
+      id: gate
+      shell: bash
+      env:
+        AOBS_GATE_BIN: ${{ steps.install.outputs.aobs-server }}
+        AOBS_POLICY: ${{ inputs.policy }}
+        AOBS_TRACES: ${{ inputs.traces }}
+        AOBS_BASELINE: ${{ inputs.baseline }}
+        AOBS_BASELINE_TRACE: ${{ inputs.baseline-trace }}
+        AOBS_PROJECT: ${{ inputs.project }}
+        AOBS_NO_ERROR_MESSAGES: ${{ inputs.no-error-messages }}
+        AOBS_REPORT_DIR: ${{ inputs.report-dir }}
+        AOBS_COMMENT_ON_PR: ${{ inputs.comment-on-pr }}
+        AOBS_FAIL_ON_REGRESSION: ${{ inputs.fail-on-regression }}
+      run: bash "$GITHUB_ACTION_PATH/gate.sh" run
+
+    - name: Comment on the pull request
+      id: comment
+      if: inputs.comment-on-pr == 'true'
+      shell: bash
+      env:
+        AOBS_PYTHON: ${{ steps.python.outputs.python-path }}
+        AOBS_COMMENT_TAG: ${{ inputs.comment-tag }}
+        AOBS_RESULT: ${{ steps.gate.outputs.result }}
+        AOBS_EXIT_CODE: ${{ steps.gate.outputs.exit-code }}
+        AOBS_MARKDOWN_PATH: ${{ steps.gate.outputs.markdown-path }}
+        GH_TOKEN: ${{ github.token }}
+      run: '"$AOBS_PYTHON" -I "$GITHUB_ACTION_PATH/comment.py"'
+
+    - name: Gate verdict
+      shell: bash
+      env:
+        AOBS_RESULT: ${{ steps.gate.outputs.result }}
+        AOBS_EXIT_CODE: ${{ steps.gate.outputs.exit-code }}
+        AOBS_FAIL_ON_REGRESSION: ${{ inputs.fail-on-regression }}
+      run: bash "$GITHUB_ACTION_PATH/gate.sh" verdict
+
+branding:
+  icon: check-circle
+  color: green

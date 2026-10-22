@@ -96,7 +96,7 @@ nav:
           - LangChain / LangGraph: integrations/langchain.md
       - Action safety: action-safety.md
       - Reliability gate: reliability-gate.md
-      # TODO(lead): add "GitHub Action: github-action.md" here once docs/github-action.md is merged.
+      - GitHub Action: github-action.md
       - Analyzing stored traces: stored-analysis.md
       - Dashboard: dashboard.md
   - Reference:
