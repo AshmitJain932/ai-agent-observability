@@ -92,14 +92,14 @@ denials, approval, rejections, timeouts, duplicates, a restart) and
 `examples/support_agent/protect_example.py` (wrapping an existing tool in a few lines).
 
 Recipes for other risky tools, each one offline file with its own policy
-([`examples/safety_recipes/`](../examples/safety_recipes/README.md)):
+([`examples/safety_recipes/`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/safety_recipes/README.md)):
 
-- [`send_email.py`](../examples/safety_recipes/send_email.py): one email per (ticket, template),
+- [`send_email.py`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/safety_recipes/send_email.py): one email per (ticket, template),
   only to the customer on record, also when the agent loops, retries after a timeout or restarts.
-- [`delete_records.py`](../examples/safety_recipes/delete_records.py): delete only records that
+- [`delete_records.py`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/safety_recipes/delete_records.py): delete only records that
   exist and belong to the signed-in account; a person approves larger deletions, bulk ones are
   refused.
-- [`deploy.py`](../examples/safety_recipes/deploy.py): deploy only the commit CI marked green, at
+- [`deploy.py`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/safety_recipes/deploy.py): deploy only the commit CI marked green, at
   most once per (service, environment, commit); production needs approval.
 
 ## Policy

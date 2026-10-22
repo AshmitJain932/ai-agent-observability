@@ -2,7 +2,7 @@
 
 | File | What it is |
 |---|---|
-| `safety-demo.gif` | A terminal session of [`examples/support_agent/protect_example.py`](../../examples/support_agent/protect_example.py): the agent is asked for the same refund three times (twice in one process, then after a restart) and the guarded refund tool runs once. 800 px wide, about 9 s, loops. |
+| `safety-demo.gif` | A terminal session of [`examples/support_agent/protect_example.py`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/support_agent/protect_example.py): the agent is asked for the same refund three times (twice in one process, then after a restart) and the guarded refund tool runs once. 800 px wide, about 9 s, loops. |
 | `safety-demo.svg` | The same session as an animated SVG (SMIL, no script), for places that prefer vector images. |
 | `make_safety_demo.py` | Generates both. |
 
