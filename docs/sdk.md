@@ -206,7 +206,10 @@ once a minute per category.
 ## Exporters
 
 `HttpExporter(endpoint, api_key=None, headers=None)`, `JsonlFileExporter(path)` (one batch per
-line, file mode 0600), `InMemoryExporter()` (tests). To add a transport, implement:
+line, file mode 0600), `InMemoryExporter()` (tests), `OtlpHttpExporter(endpoint, headers=None)`
+(OTLP/HTTP JSON to an OpenTelemetry Collector, Jaeger, Tempo, ...; see
+[opentelemetry.md](opentelemetry.md)) and `FanOutExporter(*exporters)` (send every batch to
+several exporters, retrying each destination separately). To add a transport, implement:
 
 ```python
 class MyExporter:

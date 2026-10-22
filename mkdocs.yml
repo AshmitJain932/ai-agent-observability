@@ -103,7 +103,7 @@ nav:
       - Event model: event-model.md
       - Traces API: traces-api.md
       - Ingestion API: ingestion.md
-      # TODO(lead): add "OpenTelemetry: opentelemetry.md" here once docs/opentelemetry.md is merged.
+      - OpenTelemetry export: opentelemetry.md
   - Project:
       - Architecture: architecture.md
       - Decisions: decisions.md
