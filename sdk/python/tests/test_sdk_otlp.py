@@ -337,7 +337,8 @@ def test_no_content_leaves_when_capture_is_metadata_only(otlp: Collector, make_s
     _tool_and_llm_with_content()
     assert aobs.flush(5)
     body = b"".join(r["body"] for r in otlp.requests).decode()
-    for fragment in ("jane.doe", "4111", "Customer"):
+    # Each fragment has a character no hex id, hash or fingerprint can contain, so a match is a leak.
+    for fragment in ("jane.doe", "4111 1111", "Customer"):
         assert fragment not in body
     spans = otlp.spans()
     for name in ("lookup", "chat"):
