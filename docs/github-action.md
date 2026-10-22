@@ -1,6 +1,6 @@
 # GitHub Action: the reliability gate as one step
 
-[`actions/gate`](../actions/gate/action.yml) runs [`aobs-server gate`](reliability-gate.md) in a
+[`actions/gate`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/actions/gate/action.yml) runs [`aobs-server gate`](reliability-gate.md) in a
 GitHub Actions job: it checks the recorded agent runs against your policy, shows the result as the
 job summary, writes a JUnit report, and can keep one comment on the pull request up to date. You
 write one step instead of copying a workflow:
@@ -16,9 +16,9 @@ write one step instead of copying a workflow:
 
 Recording the runs (any code that runs your agent with the SDK's `JsonlFileExporter`) stays your
 test harness's job, in a step before this one. A complete workflow to copy:
-[`examples/ci/github-actions-agent-gate-action.yml`](../examples/ci/github-actions-agent-gate-action.yml).
+[`examples/ci/github-actions-agent-gate-action.yml`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/ci/github-actions-agent-gate-action.yml).
 The same job with plain commands instead of the action:
-[`examples/ci/github-actions-agent-gate.yml`](../examples/ci/github-actions-agent-gate.yml).
+[`examples/ci/github-actions-agent-gate.yml`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/examples/ci/github-actions-agent-gate.yml).
 
 ## What the step does
 

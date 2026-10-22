@@ -94,8 +94,8 @@ Content-Type: application/json
 
 The body is one schema-v1 envelope: `schema_version`, optional `batch_id`, `sent_at`, `resource`
 and 1 to 1000 `events`. The format is defined in [event-model.md](event-model.md) and
-[`schema/v1/ingest.schema.json`](../schema/v1/ingest.schema.json); this API does not add or
-change any field.
+[`schema/v1/ingest.schema.json`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/schema/v1/ingest.schema.json);
+this API does not add or change any field.
 
 **The project is always the API key's project.** The wire format has no project field. An
 unknown envelope or resource field such as `project_id` is a validation error (400), so a client
