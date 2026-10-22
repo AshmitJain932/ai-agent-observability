@@ -12,7 +12,7 @@ import aobs
 
 PROBE = """
 import json, sys, sysconfig
-import aobs, aobs.export, aobs.integrations.openai_compat, aobs.privacy, aobs.fingerprint
+import aobs, aobs.export, aobs.integrations.openai_compat, aobs.integrations.anthropic, aobs.privacy, aobs.fingerprint
 stdlib = {sysconfig.get_paths()["stdlib"], sysconfig.get_paths()["platstdlib"]}
 mods = {}
 for name, mod in list(sys.modules.items()):
