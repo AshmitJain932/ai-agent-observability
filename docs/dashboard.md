@@ -13,12 +13,17 @@ and the CLI always agree.
 traces stored by the collector.
 - **Sample data (default):** the recordings in `examples/diagnose/`. These are healthy, slow,
   flaky, refund-outage, retry-storm and crashed runs, recorded with the real SDK, and are clearly
-  labelled *Sample data* in the dashboard.
+  labelled *Sample data* in the dashboard. A copy is installed with `aobs-server`, so an installed
+  dashboard shows them without a clone of the repository; `--samples-dir` reads another directory
+  with the same layout.
 - **Local files:** your own trace files, from a directory you name with `--data-dir`.
 - **Stored traces:** the 200 most recently started traces of one project in the collector's
   PostgreSQL database, with `--project` (see [Stored traces](#stored-traces-collector-database)).
 
 ## Quick start (GitHub Codespaces or any Linux/macOS machine)
+
+With Docker, `docker compose up` starts the dashboard together with PostgreSQL and the collector,
+with sample traces already stored: see [docker.md](docker.md). Without Docker:
 
 **Prerequisites:** Python 3.11 or newer, and [uv](https://docs.astral.sh/uv/). In a Codespace, if
 `uv --version` fails, install it with:

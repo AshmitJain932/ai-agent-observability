@@ -38,6 +38,10 @@ bottleneck rule. Exit codes: 0 report printed, 1 no traces or unreadable input, 
 
 ## The samples
 
+`traces/`, `compare/` and `groups/` are also installed with `aobs-server`, as the dashboard's sample
+datasets (`server/src/aobs_server/dashboard/samples/`). After re-recording them here, copy them
+there too; `server/tests/test_demo.py` fails while the two differ.
+
 | File | What happened | Findings |
 |---|---|---|
 | `refund_outage.jsonl` | The Phase 2 support agent; the payments API times out and the timeout fails the run | `error.root_cause` |

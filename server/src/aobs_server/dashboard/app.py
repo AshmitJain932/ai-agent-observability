@@ -40,7 +40,7 @@ from ..diagnosis.loader import Source
 from ..diagnosis.repeated import GroupConfig, build_group_report
 from ..errors import ApiError, BadRequest, NotFound
 from .datasets import (
-    REPO_EXAMPLES,
+    PACKAGED_SAMPLES,
     DatasetSpec,
     DatasetStore,
     LoadedDataset,
@@ -85,7 +85,7 @@ class DatasetUnavailable(ApiError):
 
 @dataclass(frozen=True)
 class DashboardConfig:
-    samples_dir: Path | None = REPO_EXAMPLES  # None: no sample datasets
+    samples_dir: Path | None = PACKAGED_SAMPLES  # the copy installed with the package; None: no sample datasets
     data_dir: Path | None = None  # a directory of the operator's own JSONL files
     token: str | None = None  # required for the local and stored datasets
     project_id: UUID | None = None  # show this project's stored traces (needs engine)
@@ -196,7 +196,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         return _problem(ApiError("The dashboard could not process this request"))
 
     notes = {
-        "sample": "Sample recordings shipped with the repository, not live production traffic.",
+        "sample": "Sample recordings shipped with aobs-server, not live production traffic.",
         "local": "Local trace files on the machine running the dashboard (not live ingestion).",
         "stored": "Traces stored by the collector (PostgreSQL), read with the project's current privacy policy.",
     }
