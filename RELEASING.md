@@ -16,10 +16,12 @@ through PyPI Trusted Publishing, so no API token or password is stored anywhere.
    | Owner             | `AshmitJain932`          | `AshmitJain932`          |
    | Repository name   | `ai-agent-observability` | `ai-agent-observability` |
    | Workflow name     | `release.yml`            | `release.yml`            |
-   | Environment name  | `pypi`                   | `pypi`                   |
+   | Environment name  | `pypi`                   | `pypi-server`            |
 
-3. On GitHub, open **Settings → Environments → New environment**, name it `pypi`. Optionally add
-   yourself as a required reviewer so every release waits for your click.
+3. On GitHub, open **Settings → Environments** and create two environments, `pypi` and
+   `pypi-server`. PyPI refuses two pending publishers with the same environment, which is why
+   each package has its own. Optionally add yourself as a required reviewer on both so every
+   release waits for your click.
 
 ## Each release
 

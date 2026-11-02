@@ -46,8 +46,10 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
-    name: Publish to PyPI
+  # PyPI allows one pending publisher per (repository, workflow, environment), so each package
+  # publishes from its own environment: "pypi" for aobs, "pypi-server" for aobs-server.
+  publish-sdk:
+    name: Publish aobs to PyPI
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -60,5 +62,26 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: dist
-          path: dist/
+          path: all/
+      - name: Keep only the aobs distributions
+        run: mkdir dist && mv all/aobs-[0-9]* dist/ && ls dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-server:
+    name: Publish aobs-server to PyPI
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: pypi-server
+      url: https://pypi.org/project/aobs-server/
+    permissions:
+      id-token: write  # Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: all/
+      - name: Keep only the aobs-server distributions
+        run: mkdir dist && mv all/aobs_server-* dist/ && ls dist
       - uses: pypa/gh-action-pypi-publish@release/v1
