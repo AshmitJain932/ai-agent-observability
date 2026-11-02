@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-This project is pre-release (`0.1.0.dev0`) and maintained on a best-effort basis. Security fixes
+This project is pre-release (`0.1.0a1`) and maintained on a best-effort basis. Security fixes
 go to the `master` branch only; there are no maintained release branches yet.
 
 ## Reporting a vulnerability

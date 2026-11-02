@@ -1,0 +1,64 @@
+# Publishes both packages (aobs, aobs-server) to PyPI when a version tag such as v0.1.0a1 is pushed.
+# Uses PyPI Trusted Publishing (OIDC): no API token or password is stored in this repository.
+# One-time setup on pypi.org is described in RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check the distributions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: The tag matches both package versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          sdk=$(grep -m1 '^version' sdk/python/pyproject.toml | cut -d'"' -f2)
+          srv=$(grep -m1 '^version' server/pyproject.toml | cut -d'"' -f2)
+          lib=$(cut -d'"' -f2 sdk/python/src/aobs/_version.py | head -1)
+          echo "tag=$tag sdk=$sdk server=$srv __version__=$lib"
+          test "$tag" = "$sdk" && test "$tag" = "$srv" && test "$tag" = "$lib"
+      - name: Build
+        run: |
+          uv build sdk/python -o dist
+          uv build server -o dist
+      - name: Check metadata
+        run: uvx twine check --strict dist/*
+      - name: The wheels install and run in a clean environment
+        run: |
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke/bin/python dist/*.whl
+          /tmp/smoke/bin/python -c "import aobs, aobs_server; print(aobs.__version__)"
+          /tmp/smoke/bin/aobs-server --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/aobs/
+    permissions:
+      id-token: write  # Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -100,12 +100,12 @@ wheels = [
 
 [[package]]
 name = "aobs"
-version = "0.1.0.dev0"
+version = "0.1.0a1"
 source = { editable = "sdk/python" }
 
 [[package]]
 name = "aobs-server"
-version = "0.1.0.dev0"
+version = "0.1.0a1"
 source = { editable = "server" }
 dependencies = [
     { name = "alembic" },
