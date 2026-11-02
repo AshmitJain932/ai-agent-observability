@@ -26,7 +26,7 @@ tool runs once.*
   prevents duplicates across retries and restarts. It is not exactly-once; its guarantees are
   stated.
 
-> **Status: alpha** (`0.1.0.dev0`), not on PyPI yet: install from a clone. Not production-hardened:
+> **Status: alpha** (`0.1.0a1`), not on PyPI yet: install from a clone. Not production-hardened:
 > the collector has no rate limiting, retention job or TLS of its own. Integrations are tested
 > against the real client libraries with mocked HTTP, not yet against live provider APIs.
 

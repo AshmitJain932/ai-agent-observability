@@ -5,7 +5,7 @@ and cost — as nested traces, whatever framework or model provider the agent us
 the runs, checks them against requirements you write down, and guards the tools that have real
 side effects.
 
-> **Status:** pre-release (`0.1.0.dev0`), not yet published to PyPI: install from a clone of the
+> **Status:** pre-release (`0.1.0a1`), not yet published to PyPI: install from a clone of the
 > repository. Not production-hardened: the collector has no rate limiting, retention job or TLS
 > of its own yet. See the [roadmap](roadmap.md) for what is done and what is planned.
 

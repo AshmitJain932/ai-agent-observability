@@ -1,6 +1,6 @@
 [project]
 name = "aobs-server"
-version = "0.1.0.dev0"
+version = "0.1.0a1"
 description = "aobs server: canonical event model, ingestion and query"
 readme = "README.md"
 requires-python = ">=3.11"

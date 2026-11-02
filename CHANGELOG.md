@@ -5,12 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it makes releases.
 **No version has been published yet**: both packages, `aobs` (the SDK) and `aobs-server` (the
-collector and tools), are at `0.1.0.dev0` and are installed from a clone of the repository.
+collector and tools), are at `0.1.0a1`, the first version prepared for PyPI (see [RELEASING.md](RELEASING.md)).
 Changes to the wire schema are recorded separately in [schema/CHANGELOG.md](schema/CHANGELOG.md).
 
-## [Unreleased]
+## [0.1.0a1] - Unreleased
 
-Everything that exists today. Status per component, and what is planned, is in
+First release to PyPI, published by the tag-triggered Release workflow. Everything that exists today. Status per component, and what is planned, is in
 [docs/roadmap.md](docs/roadmap.md).
 
 ### Added

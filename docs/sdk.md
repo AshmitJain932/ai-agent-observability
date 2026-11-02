@@ -1,6 +1,6 @@
 # Python SDK (`aobs`)
 
-Status: **Phase 2** (2026-10-12). Version `0.1.0.dev0`, not yet published to PyPI. Python ≥ 3.11.
+Status: **Phase 2** (2026-10-12). Version `0.1.0a1`, not yet published to PyPI. Python ≥ 3.11.
 No third-party dependencies. Emits wire schema v1.0 ([event-model.md](event-model.md)).
 
 ## Install
