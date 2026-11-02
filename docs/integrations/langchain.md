@@ -19,7 +19,7 @@ needs only the standard library; `langchain-core` is imported the first time `Ca
 is used, so install it in your application (LangGraph already depends on it):
 
 ```bash
-pip install ./sdk/python langchain-core     # from a checkout; `uv sync` in this repo installs both
+pip install aobs langchain-core             # in this repo, `uv sync` installs both
 ```
 
 ## Quick start

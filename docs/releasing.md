@@ -1,48 +1,41 @@
 # Releasing to PyPI
 
-Two packages are published separately: `aobs` (the SDK, `sdk/python/`) and `aobs-server`
-(`server/`). Nothing is published automatically. These steps need a PyPI account that owns (or
-will create) both projects.
+Both packages, `aobs` (the SDK) and `aobs-server` (collector and tools), are released together with
+the same version number. Publishing runs in GitHub Actions ([`release.yml`](https://github.com/AshmitJain932/ai-agent-observability/blob/master/.github/workflows/release.yml))
+through PyPI Trusted Publishing, so no API token or password is stored anywhere.
 
-## Before a release
+## One-time setup (maintainer, on pypi.org)
 
-1. CI is green on `master` (lint, types, the full suite on Python 3.11, 3.12 and 3.13).
-2. Set the version in both `pyproject.toml` files. Use a pre-release version while the API may
-   still change, e.g. `0.1.0a1` (PEP 440). `aobs-server` and `aobs` are versioned together.
-3. Build and check:
+1. Sign in to <https://pypi.org> (create an account and turn on two-factor authentication if needed).
+2. Go to **Your account → Publishing → Add a new pending publisher** and add a GitHub publisher
+   **twice**, once per package:
+
+   | Field             | First entry              | Second entry             |
+   |-------------------|--------------------------|--------------------------|
+   | PyPI project name | `aobs`                   | `aobs-server`            |
+   | Owner             | `AshmitJain932`          | `AshmitJain932`          |
+   | Repository name   | `ai-agent-observability` | `ai-agent-observability` |
+   | Workflow name     | `release.yml`            | `release.yml`            |
+   | Environment name  | `pypi`                   | `pypi-server`            |
+
+3. On GitHub, open **Settings → Environments** and create two environments, `pypi` and
+   `pypi-server`. PyPI refuses two pending publishers with the same environment, which is why
+   each package has its own. Optionally add yourself as a required reviewer on both so every
+   release waits for your click.
+
+## Each release
+
+1. Set the same version in `sdk/python/pyproject.toml`, `sdk/python/src/aobs/_version.py` and
+   `server/pyproject.toml`, run `uv lock`, and add a `CHANGELOG.md` entry.
+2. Merge to `master`, then tag and push:
 
    ```bash
-   rm -rf dist
-   uv build --out-dir dist sdk/python
-   uv build --out-dir dist server
-   uvx twine check dist/*
+   git tag v0.1.0a1
+   git push origin v0.1.0a1
    ```
 
-4. Install the built wheels in a fresh environment and try them:
+3. The **Release** workflow checks that the tag matches the versions, builds, runs `twine check`,
+   installs the wheels in a clean environment, and publishes both packages.
 
-   ```bash
-   uv venv /tmp/aobs-release && uv pip install --python /tmp/aobs-release dist/*.whl
-   /tmp/aobs-release/bin/python -c "import aobs, aobs.safety; print(aobs.__version__)"
-   /tmp/aobs-release/bin/aobs-server --help
-   ```
-
-## Publish
-
-Upload to TestPyPI first, check the project page and an install from it, then to PyPI:
-
-```bash
-uv publish --publish-url https://test.pypi.org/legacy/ dist/*   # TestPyPI
-uv publish dist/*                                                # PyPI
-```
-
-`uv publish` asks for a token (or uses `UV_PUBLISH_TOKEN`). Prefer a token scoped to the two
-projects, or set up PyPI trusted publishing from a GitHub Actions workflow so no token is stored.
-Never commit a token.
-
-## Notes
-
-- A version can be uploaded only once; a mistake needs a new version number.
-- Package names are not reserved until the first upload, and PyPI may refuse a name it considers
-  too similar to an existing project.
-- The dashboard's sample datasets are read from the repository's `examples/` directory, so an
-  installed `aobs-server` starts without them (it says so); `--data-dir` and stored traces work.
+PyPI never accepts the same version twice: if something is wrong after publishing, bump the version
+(for example `0.1.0a2`) rather than re-tagging.

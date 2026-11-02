@@ -1,16 +1,18 @@
 # Python SDK (`aobs`)
 
-Status: **Phase 2** (2026-10-12). Version `0.1.0a1`, not yet published to PyPI. Python ≥ 3.11.
+Status: **Phase 2** (2026-10-12). Version `0.1.0a1`, [on PyPI](https://pypi.org/project/aobs/). Python ≥ 3.11.
 No third-party dependencies. Emits wire schema v1.0 ([event-model.md](event-model.md)).
 
 ## Install
 
-From a checkout of this repository:
+```bash
+pip install aobs                     # the SDK; add aobs-server for the command-line tools
+```
+
+From a checkout of this repository, for development:
 
 ```bash
 uv sync                              # installs aobs (editable) + the server model + dev tools
-# or, into another environment:
-pip install ./sdk/python
 ```
 
 ## Quick start
