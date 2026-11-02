@@ -26,13 +26,13 @@ tool runs once.*
   prevents duplicates across retries and restarts. It is not exactly-once; its guarantees are
   stated.
 
-> **Status: alpha** (`0.1.0a1`), not on PyPI yet: install from a clone. Not production-hardened:
-> the collector has no rate limiting, retention job or TLS of its own. Integrations are tested
+> **Status: alpha** (`0.1.0a1`), [on PyPI](https://pypi.org/project/aobs/): `pip install aobs aobs-server`.
+> Not production-hardened: the collector has no rate limiting, retention job or TLS of its own. Integrations are tested
 > against the real client libraries with mocked HTTP, not yet against live provider APIs.
 
 ## See it in 60 seconds
 
-With Docker, from a clone of this repository:
+With Docker, from a clone of this repository (the demo builds the collector image locally):
 
 ```bash
 docker compose up
@@ -47,9 +47,11 @@ values for your own machine only; see [docs/docker.md](docs/docker.md).
 Requires Python ≥ 3.11.
 
 ```bash
-git clone https://github.com/AshmitJain932/ai-agent-observability.git
-pip install ./ai-agent-observability/sdk/python ./ai-agent-observability/server
+pip install aobs aobs-server
 ```
+
+`aobs` is the SDK (no dependencies); `aobs-server` adds the `aobs-server` command (diagnosis, the
+reliability gate, the dashboard and the collector).
 
 Record what your agent does (`agent.py`; the SDK has no dependencies, and nothing leaves your
 machine with a file exporter):
@@ -103,6 +105,36 @@ aobs-server gate --policy policy.toml traces.jsonl
 
 Next: [docs/getting-started.md](docs/getting-started.md), the [SDK guide](docs/sdk.md), the
 [reliability gate](docs/reliability-gate.md) and [action safety](docs/action-safety.md).
+
+### Trace a real model with no API key
+
+[Ollama](https://ollama.com) runs a small open model locally (on your machine or in a Google Colab
+notebook) behind an OpenAI-compatible API, so the OpenAI integration traces it unchanged:
+
+```bash
+ollama pull qwen2.5:0.5b        # with `ollama serve` running
+pip install openai
+```
+
+```python
+import aobs, openai
+from aobs.export import JsonlFileExporter
+from aobs.integrations.openai_compat import wrap
+
+aobs.init(service_name="local-llm", exporter=JsonlFileExporter("llm.jsonl"))
+client = wrap(openai.OpenAI(base_url="http://localhost:11434/v1", api_key="ollama"), provider="ollama")
+
+with aobs.run("ask"):
+    client.chat.completions.create(
+        model="qwen2.5:0.5b",
+        messages=[{"role": "user", "content": "Say hi in one line"}],
+    )
+
+aobs.shutdown()
+```
+
+`aobs-server analyze llm.jsonl` then shows the model call with its latency and token counts. The
+`api_key` is a placeholder the `openai` client requires; Ollama ignores it.
 
 ## Integrations
 

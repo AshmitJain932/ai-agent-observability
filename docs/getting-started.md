@@ -5,12 +5,10 @@ no database and no API key, and nothing leaves your machine.
 
 ## Install
 
-Requires Python ≥ 3.11. The packages are not on PyPI yet: install them from a clone of the
-repository.
+Requires Python ≥ 3.11.
 
 ```bash
-git clone https://github.com/AshmitJain932/ai-agent-observability.git
-pip install ./ai-agent-observability/sdk/python ./ai-agent-observability/server
+pip install aobs aobs-server
 ```
 
 `aobs` is the SDK (standard library only). `aobs-server` provides the `aobs-server` command:

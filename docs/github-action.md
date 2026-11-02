@@ -26,8 +26,8 @@ The same job with plain commands instead of the action:
    and the Python of your other steps do not change).
 2. Installs `aobs-server` into a private virtual environment under `RUNNER_TEMP`. By default it
    installs the `server/` package **of the same checkout as the action** (`github.action_path`),
-   so the gate is always the version of the action you pinned. aobs-server is not on PyPI yet;
-   once it is, `install-source: aobs-server==X.Y` installs a release instead. pip resolves the
+   so the gate is always the version of the action you pinned. To install a release from PyPI
+   instead, set `install-source: aobs-server==0.1.0a1` (or another version). pip resolves the
    dependencies within the ranges in `server/pyproject.toml` (not from `uv.lock`), so the runner
    needs access to a package index.
 3. Runs `aobs-server gate --policy POLICY --junit … --markdown … -- TRACES…`. The text report goes
